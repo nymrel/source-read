@@ -355,7 +355,7 @@ def verify_tree(root: Path) -> None:
         '- os: ubuntu-latest\n            python-version: "3.12.14"',
         '- os: ubuntu-latest\n            python-version: "3.13.15"',
         '- os: ubuntu-latest\n            python-version: "3.14.7"',
-        '- os: windows-2022\n            python-version: "3.11.16"',
+        '- os: windows-2022\n            python-version: "3.11.9"',
         '- os: windows-latest\n            python-version: "3.14.7"',
         '- os: macos-latest\n            python-version: "3.14.7"',
     )

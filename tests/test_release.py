@@ -295,7 +295,7 @@ class ReleaseVerifierTests(unittest.TestCase):
             workflow_path = public_root / ".github" / "workflows" / "ci.yml"
             workflow_path.write_bytes(
                 workflow_path.read_bytes().replace(
-                    b'          - os: windows-2022\n            python-version: "3.11.16"\n',
+                    b'          - os: windows-2022\n            python-version: "3.11.9"\n',
                     b"",
                 )
             )
