@@ -80,6 +80,7 @@ class ReleaseVerifierTests(unittest.TestCase):
         extra_metadata_header: str | None = None,
         metadata_name: str = "source-read",
         metadata_prefix: str = "",
+        record_first: bool = False,
     ) -> None:
         prefix = f"source_read-{verify_release.PROJECT_VERSION}.dist-info/"
         record_name = f"{prefix}RECORD"
@@ -140,8 +141,15 @@ class ReleaseVerifierTests(unittest.TestCase):
         rows.append(f"{record_name},,")
         payloads[record_name] = ("\n".join(rows) + "\n").encode()
 
+        ordered_payloads = list(payloads.items())
+        if record_first:
+            ordered_payloads = [
+                (record_name, payloads[record_name]),
+                *(item for item in ordered_payloads if item[0] != record_name),
+            ]
+
         with zipfile.ZipFile(path, "w") as bundle:
-            for name, payload in payloads.items():
+            for name, payload in ordered_payloads:
                 info = zipfile.ZipInfo(name, date_time=(1980, 1, 1, 0, 0, 0))
                 info.compress_type = zipfile.ZIP_DEFLATED
                 info.create_system = 0 if os.name == "nt" else 3
@@ -823,6 +831,36 @@ class ReleaseVerifierTests(unittest.TestCase):
                         RuntimeError, "member metadata mismatch"
                     ):
                         verify_package_build._verify_wheel_metadata(wheel)
+
+    def test_wheel_verifier_rejects_central_directory_length_mutations(self) -> None:
+        with tempfile.TemporaryDirectory(dir=ROOT / "dist") as temporary:
+            wheel = Path(temporary) / "source_read-0.2.0-py3-none-any.whl"
+            for record_first in (False, True):
+                with self.subTest(record_first=record_first):
+                    self._wheel(wheel, record_first=record_first)
+                    verify_package_build._verify_wheel_metadata(wheel)
+                    original = wheel.read_bytes()
+                    central = original.rfind(b"PK\x01\x02")
+                    self.assertGreaterEqual(central, 0)
+
+                    marker_mutation = bytearray(original)
+                    marker_mutation[central + 28 : central + 34] = b"SECRET"
+                    wheel.write_bytes(marker_mutation)
+                    with self.assertRaisesRegex(
+                        RuntimeError, "central directory mismatch"
+                    ):
+                        verify_package_build._verify_wheel_metadata(wheel)
+
+                    for offset in range(28, 34):
+                        for mask in (1, 0x80):
+                            with self.subTest(offset=offset, mask=mask):
+                                mutated = bytearray(original)
+                                mutated[central + offset] ^= mask
+                                wheel.write_bytes(mutated)
+                                with self.assertRaisesRegex(
+                                    RuntimeError, "central directory mismatch"
+                                ):
+                                    verify_package_build._verify_wheel_metadata(wheel)
 
     def test_wheel_verifier_rejects_bytes_after_deflate_eof(self) -> None:
         payload = b"synthetic reviewed member"

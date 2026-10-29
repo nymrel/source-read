@@ -134,6 +134,74 @@ def _verify_deflate_member(compressed: bytes, info: zipfile.ZipInfo) -> None:
         raise RuntimeError(f"wheel compressed payload mismatch: {info.filename}")
 
 
+def _verify_central_directory(
+    wheel_bytes: bytes,
+    infos: list[zipfile.ZipInfo],
+    central_offset: int,
+    central_size: int,
+    eocd_offset: int,
+) -> None:
+    """Validate each raw central record without relying on zipfile normalization."""
+
+    cursor = central_offset
+    central_end = central_offset + central_size
+    for info in infos:
+        if cursor + 46 > central_end:
+            raise RuntimeError("wheel ZIP central directory mismatch")
+        (
+            signature,
+            version_made_by,
+            version_needed,
+            flags,
+            compression,
+            modified_time,
+            modified_date,
+            crc,
+            compressed_size,
+            uncompressed_size,
+            name_length,
+            extra_length,
+            comment_length,
+            disk_number,
+            internal_attr,
+            external_attr,
+            local_offset,
+        ) = struct.unpack_from("<4s2H4H3L5H2L", wheel_bytes, cursor)
+        name_start = cursor + 46
+        name_end = name_start + name_length
+        record_end = name_end + extra_length + comment_length
+        expected_name = info.filename.encode("ascii")
+        if (
+            record_end > central_end
+            or signature != b"PK\x01\x02"
+            or version_made_by & 0xFF != info.create_version
+            or version_made_by >> 8 != info.create_system
+            or version_needed & 0xFF != info.extract_version
+            or version_needed >> 8 != info.reserved
+            or flags != info.flag_bits
+            or compression != info.compress_type
+            or modified_time != 0
+            or modified_date != 33
+            or crc != info.CRC
+            or compressed_size != info.compress_size
+            or uncompressed_size != info.file_size
+            or name_length != len(expected_name)
+            or wheel_bytes[name_start:name_end] != expected_name
+            or extra_length != 0
+            or comment_length != 0
+            or disk_number != info.volume
+            or internal_attr != info.internal_attr
+            or external_attr != info.external_attr
+            or local_offset != info.header_offset
+        ):
+            raise RuntimeError(
+                f"wheel ZIP central directory mismatch: {info.filename}"
+            )
+        cursor = record_end
+    if cursor != central_end or central_end != eocd_offset:
+        raise RuntimeError("wheel ZIP central directory mismatch")
+
+
 def _verify_wheel_envelope(
     wheel_bytes: bytes,
     bundle: zipfile.ZipFile,
@@ -238,6 +306,9 @@ def _verify_wheel_envelope(
         or eocd_offset + 22 != len(wheel_bytes)
     ):
         raise RuntimeError("wheel ZIP envelope mismatch")
+    _verify_central_directory(
+        wheel_bytes, infos, central_offset, central_size, eocd_offset
+    )
 
 
 def _verify_wheel_metadata(wheel: Path) -> None:
