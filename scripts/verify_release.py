@@ -386,7 +386,9 @@ def verify_tree(root: Path) -> None:
         "if len(row_names) != len(set(row_names)):",
         "if set(row_names) != expected:",
         "wheel metadata field mismatch",
+        "wheel metadata header allowlist mismatch",
         "wheel README payload differs from reviewed source",
+        "wheel ZIP envelope mismatch",
         "publish_bytes(",
     ):
         if fragment not in package_builder:

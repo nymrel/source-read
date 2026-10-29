@@ -55,9 +55,10 @@ directory and retain reviewed artifacts separately.
 Packaging validation consumes the exact SHA-256-locked build closure in
 `requirements/build.lock`, disables index access during each build, compares
 two wheel builds, snapshots each wheel through one identity-checked open,
-rejects duplicate archive and RECORD names, verifies every recorded digest
-against that snapshot, and installs the result into an isolated runtime
-environment. The runtime package itself has no dependencies.
+rejects duplicate archive and RECORD names, extra metadata headers, and
+unreferenced ZIP-envelope bytes, verifies every recorded digest against that
+snapshot, and installs the result into an isolated runtime environment. The
+runtime package itself has no dependencies.
 
 Passing the verifier does not prove that Git history is clean, that every
 printable secret pattern is absent, or that hosted repository protections are

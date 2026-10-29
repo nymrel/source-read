@@ -200,6 +200,7 @@ def main() -> int:
     args = parser.parse_args()
     root = Path(__file__).resolve().parents[1]
     output = args.output if args.output.is_absolute() else root / args.output
+    output = _normalize_internal_output(root, _absolute(output))
     digest = build(root, output)
 
     if args.check_reproducible:

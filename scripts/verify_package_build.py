@@ -8,6 +8,7 @@ from email.parser import Parser
 import hashlib
 import io
 import os
+import struct
 import subprocess
 import sys
 import tempfile
@@ -115,6 +116,106 @@ def _build_wheel(python: Path, destination: Path) -> Path:
     return wheels[0]
 
 
+def _verify_wheel_envelope(
+    wheel_bytes: bytes,
+    bundle: zipfile.ZipFile,
+    infos: list[zipfile.ZipInfo],
+) -> None:
+    """Reject unreferenced bytes and metadata outside wheel member payloads."""
+
+    if not infos or infos[0].header_offset != 0 or bundle.comment:
+        raise RuntimeError("wheel ZIP envelope mismatch")
+
+    for index, info in enumerate(infos):
+        expected_external = (
+            0x81A40000 if info.filename.startswith("source_read/") else 0x01A40000
+        )
+        if (
+            info.date_time != (1980, 1, 1, 0, 0, 0)
+            or info.compress_type != zipfile.ZIP_DEFLATED
+            or info.flag_bits != 0
+            or info.create_system != 0
+            or info.create_version != 20
+            or info.extract_version != 20
+            or info.internal_attr != 0
+            or info.external_attr != expected_external
+            or info.extra
+            or info.comment
+        ):
+            raise RuntimeError(f"wheel ZIP member metadata mismatch: {info.filename}")
+
+        offset = info.header_offset
+        if offset + 30 > len(wheel_bytes):
+            raise RuntimeError("wheel ZIP envelope mismatch")
+        (
+            signature,
+            extract_version,
+            flags,
+            compression,
+            modified_time,
+            modified_date,
+            crc,
+            compressed_size,
+            uncompressed_size,
+            name_length,
+            extra_length,
+        ) = struct.unpack_from("<4s5H3L2H", wheel_bytes, offset)
+        name_start = offset + 30
+        name_end = name_start + name_length
+        if (
+            signature != b"PK\x03\x04"
+            or extract_version != info.extract_version
+            or flags != info.flag_bits
+            or compression != info.compress_type
+            or modified_time != 0
+            or modified_date != 33
+            or crc != info.CRC
+            or compressed_size != info.compress_size
+            or uncompressed_size != info.file_size
+            or wheel_bytes[name_start:name_end] != info.filename.encode("ascii")
+            or extra_length != 0
+        ):
+            raise RuntimeError(f"wheel ZIP local header mismatch: {info.filename}")
+        member_end = name_end + extra_length + info.compress_size
+        next_offset = (
+            infos[index + 1].header_offset
+            if index + 1 < len(infos)
+            else bundle.start_dir
+        )
+        if member_end != next_offset:
+            raise RuntimeError("wheel ZIP envelope contains unreferenced member bytes")
+
+    eocd_offset = wheel_bytes.rfind(b"PK\x05\x06")
+    if eocd_offset < 0 or eocd_offset + 22 > len(wheel_bytes):
+        raise RuntimeError("wheel ZIP envelope mismatch")
+    (
+        signature,
+        disk_number,
+        central_disk,
+        disk_entries,
+        total_entries,
+        central_size,
+        central_offset,
+        comment_length,
+    ) = struct.unpack_from("<4s4H2LH", wheel_bytes, eocd_offset)
+    expected_central_size = sum(
+        46 + len(info.filename.encode("ascii")) for info in infos
+    )
+    if (
+        signature != b"PK\x05\x06"
+        or disk_number != 0
+        or central_disk != 0
+        or disk_entries != len(infos)
+        or total_entries != len(infos)
+        or central_offset != bundle.start_dir
+        or central_size != expected_central_size
+        or central_offset + central_size != eocd_offset
+        or comment_length != 0
+        or eocd_offset + 22 != len(wheel_bytes)
+    ):
+        raise RuntimeError("wheel ZIP envelope mismatch")
+
+
 def _verify_wheel_metadata(wheel: Path) -> None:
     prefix = f"source_read-{PROJECT_VERSION}.dist-info/"
     wheel_bytes = read_regular_bytes(wheel, "wheel")
@@ -135,6 +236,7 @@ def _verify_wheel_metadata(wheel: Path) -> None:
                 f"wheel inventory mismatch; missing={sorted(expected - set(names))} "
                 f"extra={sorted(set(names) - expected)}"
             )
+        _verify_wheel_envelope(wheel_bytes, bundle, bundle.infolist())
         payloads = {name: bundle.read(name) for name in names}
         if payloads["source_read/__init__.py"] != (
             ROOT / "src" / "source_read" / "__init__.py"
@@ -165,6 +267,11 @@ def _verify_wheel_metadata(wheel: Path) -> None:
     for field, expected_value in expected_fields.items():
         if parsed_metadata.get_all(field, []) != [expected_value]:
             raise RuntimeError(f"wheel metadata field mismatch: {field}")
+    allowed_headers = set(expected_fields) | {"Project-URL", "Classifier"}
+    if {field.casefold() for field in parsed_metadata.keys()} != {
+        field.casefold() for field in allowed_headers
+    }:
+        raise RuntimeError("wheel metadata header allowlist mismatch")
     expected_urls = [
         "Homepage, https://github.com/nymrel/source-read",
         "Source, https://github.com/nymrel/source-read",

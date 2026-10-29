@@ -76,11 +76,12 @@ class ReleaseVerifierTests(unittest.TestCase):
         *,
         duplicate_member: bool = False,
         duplicate_record: bool = False,
+        extra_metadata_header: str | None = None,
         metadata_name: str = "source-read",
     ) -> None:
         prefix = f"source_read-{verify_release.PROJECT_VERSION}.dist-info/"
         record_name = f"{prefix}RECORD"
-        metadata = (
+        metadata_headers = (
             "Metadata-Version: 2.5\n"
             f"Name: {metadata_name}\n"
             f"Version: {verify_release.PROJECT_VERSION}\n"
@@ -103,8 +104,13 @@ class ReleaseVerifierTests(unittest.TestCase):
             "Classifier: Programming Language :: Python :: 3.14\n"
             "Classifier: Topic :: Software Development :: Quality Assurance\n"
             "Requires-Python: >=3.11\n"
-            "Description-Content-Type: text/markdown\n\n"
-        ).encode() + (ROOT / "README.md").read_bytes()
+            "Description-Content-Type: text/markdown\n"
+        )
+        if extra_metadata_header is not None:
+            metadata_headers += f"{extra_metadata_header}\n"
+        metadata = (metadata_headers + "\n").encode() + (
+            ROOT / "README.md"
+        ).read_bytes()
         payloads = {
             "source_read/__init__.py": (
                 ROOT / "src" / "source_read" / "__init__.py"
@@ -132,9 +138,17 @@ class ReleaseVerifierTests(unittest.TestCase):
         rows.append(f"{record_name},,")
         payloads[record_name] = ("\n".join(rows) + "\n").encode()
 
-        with zipfile.ZipFile(path, "w", compression=zipfile.ZIP_STORED) as bundle:
+        with zipfile.ZipFile(path, "w") as bundle:
             for name, payload in payloads.items():
-                bundle.writestr(name, payload)
+                info = zipfile.ZipInfo(name, date_time=(1980, 1, 1, 0, 0, 0))
+                info.compress_type = zipfile.ZIP_DEFLATED
+                info.create_system = 0
+                info.create_version = 20
+                info.extract_version = 20
+                info.external_attr = (
+                    0x81A40000 if name.startswith("source_read/") else 0x01A40000
+                )
+                bundle.writestr(info, payload)
             if duplicate_member:
                 with warnings.catch_warnings():
                     warnings.simplefilter("ignore", UserWarning)
@@ -703,6 +717,29 @@ class ReleaseVerifierTests(unittest.TestCase):
             verify_release.verify_tree(public_root)
             verify_release.verify_archive(public_root, output)
 
+    def test_archive_cli_normalizes_case_alias_for_reproducibility(self) -> None:
+        with tempfile.TemporaryDirectory(dir=ROOT / "dist") as temporary:
+            public_root = Path(temporary) / "source"
+            self._public_tree(public_root)
+            completed = subprocess.run(
+                [
+                    sys.executable,
+                    str(public_root / "scripts" / "build_source_archive.py"),
+                    "--output",
+                    "DIST/archive.zip",
+                    "--check-reproducible",
+                ],
+                cwd=public_root,
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+
+            self.assertEqual(completed.returncode, 0, completed.stderr)
+            verify_release.verify_archive(
+                public_root, public_root / "dist" / "archive.zip"
+            )
+
     def test_wheel_verifier_accepts_one_consistent_snapshot(self) -> None:
         with tempfile.TemporaryDirectory(dir=ROOT / "dist") as temporary:
             wheel = Path(temporary) / "source_read-0.2.0-py3-none-any.whl"
@@ -739,6 +776,24 @@ class ReleaseVerifierTests(unittest.TestCase):
             self._wheel(wheel, metadata_name="substituted")
 
             with self.assertRaisesRegex(RuntimeError, "field mismatch: Name"):
+                verify_package_build._verify_wheel_metadata(wheel)
+
+    def test_wheel_verifier_rejects_extra_metadata_header(self) -> None:
+        with tempfile.TemporaryDirectory(dir=ROOT / "dist") as temporary:
+            wheel = Path(temporary) / "source_read-0.2.0-py3-none-any.whl"
+            self._wheel(wheel, extra_metadata_header="Provides-Extra: injected")
+
+            with self.assertRaisesRegex(RuntimeError, "header allowlist mismatch"):
+                verify_package_build._verify_wheel_metadata(wheel)
+
+    def test_wheel_verifier_rejects_trailing_bytes(self) -> None:
+        with tempfile.TemporaryDirectory(dir=ROOT / "dist") as temporary:
+            wheel = Path(temporary) / "source_read-0.2.0-py3-none-any.whl"
+            self._wheel(wheel)
+            with wheel.open("ab") as bundle:
+                bundle.write(b"unreviewed trailing bytes")
+
+            with self.assertRaisesRegex(RuntimeError, "ZIP envelope mismatch"):
                 verify_package_build._verify_wheel_metadata(wheel)
 
     def test_builder_rejects_reparse_output_parent(self) -> None:
