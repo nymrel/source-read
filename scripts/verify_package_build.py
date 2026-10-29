@@ -2,7 +2,10 @@
 
 from __future__ import annotations
 
+import base64
+import csv
 import hashlib
+import io
 import os
 import subprocess
 import sys
@@ -11,6 +14,7 @@ import venv
 import zipfile
 from pathlib import Path
 
+from build_source_archive import publish_bytes
 from verify_release import PROJECT_VERSION, verify_tree
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -39,6 +43,7 @@ def _download_locked_wheels(wheelhouse: Path) -> None:
             sys.executable,
             "-m",
             "pip",
+            "--isolated",
             "download",
             "--disable-pip-version-check",
             "--require-hashes",
@@ -58,6 +63,7 @@ def _install_locked_build_tools(python: Path, wheelhouse: Path) -> None:
             str(python),
             "-m",
             "pip",
+            "--isolated",
             "install",
             "--disable-pip-version-check",
             "--no-index",
@@ -65,12 +71,13 @@ def _install_locked_build_tools(python: Path, wheelhouse: Path) -> None:
             str(wheelhouse),
             "--require-hashes",
             "--only-binary=:all:",
+            "--force-reinstall",
             "--requirement",
             str(LOCK),
         ],
         cwd=ROOT,
     )
-    _run([str(python), "-m", "pip", "check"], cwd=ROOT)
+    _run([str(python), "-m", "pip", "--isolated", "check"], cwd=ROOT)
 
 
 def _build_wheel(python: Path, destination: Path) -> Path:
@@ -88,6 +95,7 @@ def _build_wheel(python: Path, destination: Path) -> Path:
             str(python),
             "-m",
             "pip",
+            "--isolated",
             "wheel",
             "--no-build-isolation",
             "--no-deps",
@@ -110,20 +118,52 @@ def _verify_wheel_metadata(wheel: Path) -> None:
     prefix = f"source_read-{PROJECT_VERSION}.dist-info/"
     with zipfile.ZipFile(wheel) as bundle:
         names = set(bundle.namelist())
-        required = {
+        expected = {
             "source_read/__init__.py",
             "source_read/core.py",
             f"{prefix}METADATA",
             f"{prefix}WHEEL",
             f"{prefix}RECORD",
+            f"{prefix}licenses/LICENSE",
         }
-        if not required <= names:
-            raise RuntimeError(f"wheel is missing reviewed files: {sorted(required - names)}")
+        if names != expected:
+            raise RuntimeError(
+                f"wheel inventory mismatch; missing={sorted(expected - names)} "
+                f"extra={sorted(names - expected)}"
+            )
+        if bundle.read("source_read/__init__.py") != (
+            ROOT / "src" / "source_read" / "__init__.py"
+        ).read_bytes():
+            raise RuntimeError("installed package initializer differs from source")
+        if bundle.read("source_read/core.py") != (
+            ROOT / "src" / "source_read" / "core.py"
+        ).read_bytes():
+            raise RuntimeError("installed package core differs from source")
+        if bundle.read(f"{prefix}licenses/LICENSE") != (ROOT / "LICENSE").read_bytes():
+            raise RuntimeError("wheel license differs from reviewed license")
         metadata = bundle.read(f"{prefix}METADATA").decode("utf-8")
+        wheel_metadata = bundle.read(f"{prefix}WHEEL").decode("utf-8")
+        record = bundle.read(f"{prefix}RECORD").decode("utf-8")
     if f"Version: {PROJECT_VERSION}\n" not in metadata:
         raise RuntimeError("wheel metadata version mismatch")
     if "Requires-Dist:" in metadata:
         raise RuntimeError("runtime wheel unexpectedly declares dependencies")
+    if "Tag: py3-none-any\n" not in wheel_metadata:
+        raise RuntimeError("wheel compatibility tag mismatch")
+
+    rows = {row[0]: row[1:] for row in csv.reader(io.StringIO(record))}
+    if set(rows) != expected:
+        raise RuntimeError("wheel RECORD inventory mismatch")
+    for name in sorted(expected):
+        digest, size = rows[name]
+        if name == f"{prefix}RECORD":
+            if digest or size:
+                raise RuntimeError("wheel RECORD must not hash itself")
+            continue
+        payload = zipfile.Path(wheel, at=name).read_bytes()
+        encoded = base64.urlsafe_b64encode(hashlib.sha256(payload).digest()).rstrip(b"=")
+        if digest != f"sha256={encoded.decode('ascii')}" or size != str(len(payload)):
+            raise RuntimeError(f"wheel RECORD mismatch: {name}")
 
 
 def _verify_runtime_install(runtime: Path, wheel: Path) -> None:
@@ -133,6 +173,7 @@ def _verify_runtime_install(runtime: Path, wheel: Path) -> None:
             str(python),
             "-m",
             "pip",
+            "--isolated",
             "install",
             "--disable-pip-version-check",
             "--no-index",
@@ -178,8 +219,15 @@ def main() -> int:
         _verify_wheel_metadata(built[0])
         _verify_runtime_install(workspace / "runtime", built[0])
         digest = hashlib.sha256(first).hexdigest()
+        published = publish_bytes(
+            ROOT,
+            ROOT / "dist" / built[0].name,
+            first,
+            _verify_wheel_metadata,
+        )
 
     print(f"locked wheel build: PASS (sha256: {digest})")
+    print(f"verified local wheel: {published}")
     print("runtime dependencies: 0")
     print("package registry publication configured: no")
     return 0

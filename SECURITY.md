@@ -2,7 +2,7 @@
 
 ## Supported versions
 
-The current `main` branch and the latest `0.1.x` source tag are supported.
+The current `main` branch and the latest `0.2.x` source tag are supported.
 Pre-release branches may change without notice.
 
 ## Report a security issue
@@ -42,8 +42,9 @@ entries.
 The archive builder stages bytes in a fresh exclusive sibling, verifies them,
 and atomically replaces the destination. It rejects linked output paths,
 redirection in output-directory ancestors, non-regular destinations, and
-attempts to write inside the source tree outside `dist/`. A failed staged write
-or verification therefore does not truncate an existing reviewed archive or a
+attempts to write inside the source tree outside `dist/`, including alternate
+path spellings detected by filesystem identity. A failed staged write or
+verification therefore does not truncate an existing reviewed archive or a
 hardlinked victim.
 
 Packaging validation consumes the exact SHA-256-locked build closure in

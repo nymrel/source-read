@@ -47,9 +47,19 @@ An ordinary source installation lets pip create an isolated build environment.
 For the reviewed build path, run `python scripts/verify_package_build.py`. It
 downloads only the SHA-256-locked wheels in `requirements/build.lock`, installs
 them into two disposable build environments, builds twice with index access
-disabled, compares the wheel bytes within that interpreter, and performs an
-isolated runtime install. Generated wheels are not release artifacts; ZIP
-compression can produce different wheel bytes across Python or zlib versions.
+disabled, compares the wheel bytes within that interpreter, performs an
+isolated runtime install, and safely writes the verified local wheel under
+`dist/`. Install that wheel into the sibling runtime without index access:
+
+```text
+# Windows:
+../source-read-runtime/Scripts/python -m pip install --no-index --no-deps --force-reinstall dist/source_read-0.2.0-py3-none-any.whl
+# POSIX:
+../source-read-runtime/bin/python -m pip install --no-index --no-deps --force-reinstall dist/source_read-0.2.0-py3-none-any.whl
+```
+
+Generated wheels are not release artifacts; ZIP compression can produce
+different wheel bytes across Python or zlib versions.
 The initial Python interpreter, its bundled pip bootstrap, the package index,
 and the hosted runner remain trust inputs; hash locking does not make upstream
 code safe or provide operating-system network isolation.
@@ -57,8 +67,9 @@ code safe or provide operating-system network isolation.
 ## Recommended API
 
 Use `assess_check()` when the caller has a boolean policy result. The required
-`passed` argument couples display text to the machine exit code, while source
-read failures still force `UNKNOWN` / exit `2`:
+`passed` argument determines the known machine exit code and supplies default
+display text. Custom verdict text remains caller-controlled and uninterpreted;
+source read failures still force `UNKNOWN` / exit `2`:
 
 ```python
 from source_read import SourceRead, assess_check
@@ -126,7 +137,8 @@ raise SystemExit(assessment.exit_code)  # exits 1
 - `SourceRead.describe(include_details=False)` returns a generic safe summary.
   `include_details=True` explicitly reveals escaped label and reason text.
 - `assess_check(reads, *, passed, verdict=None, allow_empty=False)` is the
-  recommended boolean-check API. `passed` must be a real `bool`.
+  recommended boolean-check API. `passed` must be a real `bool`, determines
+  exit `0`/`1`, and supplies default text; custom verdict text stays opaque.
 - `assess_sources(reads, verdict, *, verdict_exit_code=EXIT_PASS,
   allow_empty=False)` is the lower-level text/code API.
 - `SourceAssessment` exposes immutable source membership, generic `problems`,

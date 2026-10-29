@@ -290,12 +290,13 @@ def assess_check(
     verdict: str | None = None,
     allow_empty: bool = False,
 ) -> SourceAssessment:
-    """Assess a boolean check without separating its text from its exit code.
+    """Assess a boolean check while deriving its known exit code.
 
     ``passed`` is required and must be a real :class:`bool`.  It selects exit
-    code ``0`` or ``1`` and, when ``verdict`` is omitted, display text ``PASS``
-    or ``FAIL``.  Unreadable or absent sources still override either known
-    outcome with ``UNKNOWN`` and exit code ``2``.
+    code ``0`` or ``1`` and supplies default display text ``PASS`` or ``FAIL``.
+    A custom ``verdict`` remains opaque caller text.  Unreadable or absent
+    sources still override either known outcome with ``UNKNOWN`` and exit code
+    ``2``.
     """
 
     if not isinstance(passed, bool):

@@ -47,6 +47,7 @@ attestation, and tag creation remain separate maintainer-controlled boundaries.
 | A ZIP hides unreviewed leading, trailing, or local-header-only bytes | Verification compares the complete supplied ZIP byte for byte with the canonical deterministic build. |
 | Archive verification observes different files across multiple opens | Verification snapshots one identity-checked regular archive and validates those exact bytes. |
 | Building through an output hardlink or symlink truncates another file | The builder rejects linked outputs, stages to an exclusive sibling, verifies first, and atomically replaces the destination entry. |
+| An alternate path namespace aliases a reviewed source as output | Lexical containment is backed by directory and file identity checks before staging or replacement. |
 | Failed generation replaces a prior reviewed archive with partial bytes | Publication occurs only after the staged archive passes exact verification. |
 | A source build silently resolves different backend dependencies | The complete build closure is version- and hash-locked, installed without index fallback, and used for two compared builds. |
 

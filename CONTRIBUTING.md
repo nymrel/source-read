@@ -33,7 +33,8 @@ python scripts/verify_package_build.py
 The first four commands require only the standard library. The last command
 downloads the exact SHA-256-locked build wheels, performs two offline-index
 builds in disposable environments, compares them, and tests an isolated
-runtime install. It does not publish the generated wheel.
+runtime install. It leaves an ignored verified wheel under `dist/` but does not
+publish it.
 
 Changes to `requirements/build.in` or `requirements/build.lock` require an
 explicit dependency-update explanation. Review every version and artifact hash,

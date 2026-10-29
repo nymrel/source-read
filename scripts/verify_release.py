@@ -341,8 +341,16 @@ def verify_tree(root: Path) -> None:
         "actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1",
         "actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97",
         "python scripts/verify_package_build.py",
+        "python -m unittest discover -s tests -v",
         "python scripts/build_source_archive.py --check-reproducible",
         "python scripts/verify_release.py --archive dist/source-read-0.2.0.zip",
+        '- os: ubuntu-latest\n            python-version: "3.11.16"',
+        '- os: ubuntu-latest\n            python-version: "3.12.14"',
+        '- os: ubuntu-latest\n            python-version: "3.13.15"',
+        '- os: ubuntu-latest\n            python-version: "3.14.7"',
+        '- os: windows-latest\n            python-version: "3.11.16"',
+        '- os: windows-latest\n            python-version: "3.14.7"',
+        '- os: macos-latest\n            python-version: "3.14.7"',
     )
     for fragment in required_workflow_fragments:
         if fragment not in workflow:
@@ -357,6 +365,22 @@ def verify_tree(root: Path) -> None:
     ):
         if forbidden in workflow.casefold():
             raise VerificationError(f"publication capability in source CI: {forbidden}")
+
+    package_builder = _read_public_text(root, "scripts/verify_package_build.py")
+    for fragment in (
+        '"--isolated"',
+        '"--require-hashes"',
+        '"--force-reinstall"',
+        '"--no-build-isolation"',
+        '"--no-index"',
+        "if names != expected:",
+        "if set(rows) != expected:",
+        "publish_bytes(",
+    ):
+        if fragment not in package_builder:
+            raise VerificationError(
+                f"locked package-build requirement missing: {fragment}"
+            )
 
 
 def canonical_archive_bytes(root: Path) -> bytes:
@@ -426,7 +450,7 @@ def main(argv: list[str] | None = None) -> int:
     try:
         verify_tree(root)
         if args.archive:
-            verify_archive(root, args.archive.resolve())
+            verify_archive(root, args.archive)
     except (OSError, KeyError, tomllib.TOMLDecodeError, VerificationError, zipfile.BadZipFile) as exc:
         print(f"FAIL: {exc}", file=sys.stderr)
         return 1
