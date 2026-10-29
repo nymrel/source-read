@@ -1,5 +1,7 @@
 # Source Read
 
+[![CI](https://github.com/nymrel/source-read/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/nymrel/source-read/actions/workflows/ci.yml)
+
 Source Read is a small, standard-library-only helper that prevents an
 unreadable source from being mistaken for a clean result. Version 0.1.0 is a
 source-only release under the MIT license; no package-registry publication is
@@ -12,6 +14,30 @@ The helper preserves a distinction that checks often lose:
 
 It records source outcomes supplied by a caller. It does not open files, query
 services, authenticate callers, validate source integrity, or enforce a policy.
+
+## Install from the tagged source
+
+Source Read supports Python 3.11 through 3.14. It is not published on PyPI, so
+do not use a bare `pip install source-read` command. Install the reviewed
+`v0.1.0` source tag instead:
+
+```text
+git clone --branch v0.1.0 --depth 1 https://github.com/nymrel/source-read.git
+cd source-read
+git rev-parse HEAD
+# expected: 51ba075b2a956785e45f236db383526979e31922
+python -m pip install .
+python -I -c "import source_read; print(source_read.__version__)"
+# expected: 0.1.0
+```
+
+Stop before installation if `git rev-parse HEAD` does not print the expected
+commit.
+
+The installed package has no third-party runtime dependencies. The source
+installation uses the pinned Hatchling build backend declared in
+`pyproject.toml`, so pip may download that build dependency in an isolated
+build environment.
 
 ## API
 
@@ -67,6 +93,20 @@ python scripts/verify_release.py --archive dist/source-read-0.1.0.zip
 These commands validate a source archive. They do not publish it or create a
 package-registry release.
 
+## Release
+
+The supported source release is [`v0.1.0`](https://github.com/nymrel/source-read/tree/v0.1.0)
+at commit
+[`51ba075b2a956785e45f236db383526979e31922`](https://github.com/nymrel/source-read/commit/51ba075b2a956785e45f236db383526979e31922).
+Its Linux and Windows validation matrix is recorded in the
+[`v0.1.0` CI run](https://github.com/nymrel/source-read/actions/runs/40814314253).
+
+The separately reviewed deterministic validation archive has SHA-256
+`51b01355e544ebcad7dd9ef933c6c45924987215cc83a755c0ca10e433556e5b`.
+That digest does not describe GitHub's automatically generated ZIP or tarball.
+See the [merged release review](https://github.com/nymrel/source-read/pull/1)
+for the release evidence and security summary.
+
 ## Scope
 
 The package is intentionally small and generic. It does not include internal
@@ -77,4 +117,8 @@ configuration. Its behavior is covered with synthetic examples only.
 
 Source Read is licensed under the [MIT License](LICENSE). Maintainer and
 security contacts are documented in [MAINTAINERS.md](MAINTAINERS.md) and
-[SECURITY.md](SECURITY.md).
+[SECURITY.md](SECURITY.md). Contributions are covered by
+[CONTRIBUTING.md](CONTRIBUTING.md), ordinary defects can be filed in the
+[issue tracker](https://github.com/nymrel/source-read/issues), and sensitive
+reports belong in a
+[private vulnerability report](https://github.com/nymrel/source-read/security/advisories/new).

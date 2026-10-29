@@ -8,10 +8,12 @@ Pre-release branches may change without notice.
 ## Report a security issue
 
 Do not post secrets, private source, customer data, credentials, or exploit
-details in a public issue. Send a concise report to `contact@nymrel.com` with
-the affected version or commit, Python and operating-system versions, a minimal
-synthetic reproducer, and the expected and observed behavior. No response-time
-SLA is promised.
+details in a public issue. Prefer GitHub's
+[private vulnerability reporting form](https://github.com/nymrel/source-read/security/advisories/new).
+If that route is unavailable, send a concise report to `contact@nymrel.com`.
+Include the affected version or commit, Python and operating-system versions,
+a minimal synthetic reproducer, and the expected and observed behavior. No
+response-time SLA is promised.
 
 ## Security boundary
 
