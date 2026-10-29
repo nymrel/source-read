@@ -56,5 +56,8 @@ separate maintainer-controlled boundaries.
 - The release verifier is not a comprehensive secret scanner and does not prove
   Git cleanliness, history exclusion, hosted protections, approvals, or tag
   state; the documented release review must establish those separately.
+- The release build workspace must remain immutable or exclusively controlled
+  during verification and archive creation. Link and opened-file identity
+  checks reduce, but do not eliminate, concurrent-writer race conditions.
 - Repeated source builds prove byte equality in one environment. Cross-version
   or cross-zlib reproducibility is not guaranteed.

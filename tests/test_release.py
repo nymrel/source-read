@@ -220,6 +220,36 @@ class ReleaseVerifierTests(unittest.TestCase):
         ):
             self.assertTrue(verify_release._is_windows_reparse_point(source_stat))
 
+    def test_reader_rejects_windows_reparse_attribute(self) -> None:
+        with tempfile.TemporaryDirectory(dir=ROOT / "dist") as temporary:
+            public_root = Path(temporary)
+            source = public_root / "README.md"
+            source.write_text("synthetic", encoding="utf-8")
+            original_lstat = Path.lstat
+            reparse_flag = getattr(stat, "FILE_ATTRIBUTE_REPARSE_POINT", 0x400)
+
+            def lstat_with_reparse(path: Path) -> object:
+                source_stat = original_lstat(path)
+                if path == source:
+                    return SimpleNamespace(
+                        st_mode=source_stat.st_mode,
+                        st_dev=source_stat.st_dev,
+                        st_ino=source_stat.st_ino,
+                        st_file_attributes=reparse_flag,
+                    )
+                return source_stat
+
+            with mock.patch.object(
+                verify_release.stat,
+                "FILE_ATTRIBUTE_REPARSE_POINT",
+                reparse_flag,
+                create=True,
+            ), mock.patch.object(Path, "lstat", lstat_with_reparse):
+                with self.assertRaisesRegex(
+                    verify_release.VerificationError, "contains a link"
+                ):
+                    verify_release.read_public_bytes(public_root, "README.md")
+
     def test_opened_file_identity_change_is_rejected(self) -> None:
         with tempfile.TemporaryDirectory(dir=ROOT / "dist") as temporary:
             public_root = Path(temporary)

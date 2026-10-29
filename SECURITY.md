@@ -40,6 +40,9 @@ Passing the verifier does not prove that Git history is clean, that every
 printable secret pattern is absent, or that hosted repository protections are
 enabled. The release process separately reviews the complete public tree,
 immutable digest, public commit history, provider checks, and tag.
+Run verification and archive creation from an immutable or exclusively
+controlled workspace; link and identity checks reduce, but cannot eliminate,
+risks from a concurrent process mutating the tree.
 
 ## Data handling
 
