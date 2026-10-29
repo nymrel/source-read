@@ -17,6 +17,7 @@ implementation and authorized its release by Nymrel under the MIT license. The
 bounded provenance review found no incorporated third-party source or notices.
 
 The project has no runtime dependencies beyond the Python standard library.
-Its pinned build backend and CI actions are release tooling, not runtime
-dependencies. Exact private-source lineage and the authorization receipt are
-retained in an archive-excluded internal review record.
+Its exact build backend, complete hash-locked build closure, and pinned CI
+actions are release tooling, not runtime dependencies. Exact private-source
+lineage and the authorization receipt are retained in an archive-excluded
+internal review record.

@@ -32,19 +32,36 @@ The package cannot detect when a caller:
 
 ## Release tooling
 
-The source-release verifier rejects links and other non-regular public-tree
-entries, and it requires a supplied ZIP to match the canonical deterministic
-build byte for byte. These controls prevent allowlisted paths from following
+The source-release verifier rejects symbolic links, reparse points, hardlinks,
+and other non-regular public-tree entries. It snapshots a supplied ZIP through
+one identity-checked open and requires the complete bytes to match the canonical
+deterministic build. These controls prevent allowlisted paths from following
 excluded files and prevent unreferenced bytes from hiding outside validated ZIP
 entries.
+
+The archive builder stages bytes in a fresh exclusive sibling, verifies them,
+and atomically replaces the destination. It rejects linked output paths,
+redirection in output-directory ancestors, non-regular destinations, and
+attempts to write inside the source tree outside `dist/`. A failed staged write
+or verification therefore does not truncate an existing reviewed archive or a
+hardlinked victim.
+
+Packaging validation consumes the exact SHA-256-locked build closure in
+`requirements/build.lock`, disables index access during each build, compares
+two wheel builds, and installs the result into an isolated runtime environment.
+The runtime package itself has no dependencies.
 
 Passing the verifier does not prove that Git history is clean, that every
 printable secret pattern is absent, or that hosted repository protections are
 enabled. The release process separately reviews the complete public tree,
 immutable digest, public commit history, provider checks, and tag.
-Run verification and archive creation from an immutable or exclusively
-controlled workspace; link and identity checks reduce, but cannot eliminate,
-risks from a concurrent process mutating the tree.
+Run verification and archive creation from immutable or exclusively controlled
+source and output directories. Path, link, identity, staging, and snapshot
+checks reduce static-link and partial-write risk, but pathname APIs cannot
+eliminate every race against a concurrently malicious directory owner on every
+supported operating system. Hash locking also does not prove upstream code is
+safe, preserve artifact availability, or authenticate the interpreter, bundled
+pip bootstrap, package index, and hosted runner image.
 
 ## Data handling
 
@@ -57,6 +74,13 @@ control, format, surrogate, private-use, unassigned, line-separator, and
 paragraph-separator characters as visible escapes to prevent multiline or
 invisible-control log injection, but it does not redact sensitive printable
 text.
+
+`assess_check()` is the recommended integration API because its required
+boolean outcome selects exit `0` or `1`. The lower-level `assess_sources()`
+keeps arbitrary verdict text independent from its exit code and defaults that
+code to `0`; it never interprets failure-looking text. In either API, callers
+must use the effective exit code or explicit `is_*` properties. Ordinary object
+truthiness and an empty source-problem tuple do not mean pass.
 
 Unbounded or infinite iterables can consume memory because assessment
 materializes the input once. Exceptions raised during iteration propagate.

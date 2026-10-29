@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 import errno
+import hashlib
 import os
 import stat
+import subprocess
 import sys
 import tempfile
 import unittest
@@ -16,6 +18,7 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "scripts"))
 
 import verify_release  # noqa: E402
+import build_source_archive  # noqa: E402
 
 
 class ReleaseVerifierTests(unittest.TestCase):
@@ -89,6 +92,25 @@ class ReleaseVerifierTests(unittest.TestCase):
 
             self.assertEqual(verify_release._files_under(nested_root), {"example.txt"})
 
+    def test_ignored_directory_contents_are_not_scanned(self) -> None:
+        with tempfile.TemporaryDirectory(dir=ROOT / "dist") as temporary:
+            nested_root = Path(temporary) / "source"
+            ignored = nested_root / "dist"
+            ignored.mkdir(parents=True)
+            (nested_root / "example.txt").write_text("synthetic", encoding="utf-8")
+            (ignored / "ephemeral.txt").write_text("changing", encoding="utf-8")
+            original_lstat = Path.lstat
+
+            def reject_ignored_lstat(path: Path) -> os.stat_result:
+                if ignored == path or ignored in path.parents:
+                    raise AssertionError("ignored directory was scanned")
+                return original_lstat(path)
+
+            with mock.patch.object(Path, "lstat", reject_ignored_lstat):
+                self.assertEqual(
+                    verify_release._files_under(nested_root), {"example.txt"}
+                )
+
     def test_unreviewed_tree_file_is_rejected(self) -> None:
         files = set(verify_release.PUBLIC_FILES) | {"unexpected.txt"}
         with mock.patch.object(verify_release, "_files_under", return_value=files):
@@ -117,7 +139,7 @@ class ReleaseVerifierTests(unittest.TestCase):
             metadata_path = public_root / "pyproject.toml"
             metadata_path.write_text(
                 metadata_path.read_text(encoding="utf-8").replace(
-                    'version = "0.1.0"', 'version = "9.9.9"'
+                    'version = "0.2.0"', 'version = "9.9.9"'
                 ),
                 encoding="utf-8",
             )
@@ -127,20 +149,20 @@ class ReleaseVerifierTests(unittest.TestCase):
             ):
                 verify_release.verify_tree(public_root)
 
-    def test_missing_install_smoke_step_is_rejected(self) -> None:
+    def test_missing_locked_build_step_is_rejected(self) -> None:
         with tempfile.TemporaryDirectory(dir=ROOT / "dist") as temporary:
             public_root = Path(temporary) / "source"
             self._public_tree(public_root)
             workflow_path = public_root / ".github" / "workflows" / "ci.yml"
             workflow_path.write_bytes(
                 workflow_path.read_bytes().replace(
-                    b"          python -m pip install .\n", b""
+                    b"        run: python scripts/verify_package_build.py\n", b""
                 )
             )
 
             with self.assertRaisesRegex(
                 verify_release.VerificationError,
-                r"workflow requirement missing: python -m pip install \.",
+                r"workflow requirement missing: python scripts/verify_package_build.py",
             ):
                 verify_release.verify_tree(public_root)
 
@@ -200,6 +222,46 @@ class ReleaseVerifierTests(unittest.TestCase):
             ):
                 verify_release.canonical_archive_bytes(public_root)
 
+    def test_symlink_leaf_is_rejected_without_platform_link_support(self) -> None:
+        with tempfile.TemporaryDirectory(dir=ROOT / "dist") as temporary:
+            public_root = Path(temporary) / "source"
+            self._public_tree(public_root)
+            linked_readme = public_root / "README.md"
+            original_lstat = Path.lstat
+
+            def lstat_with_link(path: Path) -> os.stat_result:
+                source_stat = original_lstat(path)
+                if path == linked_readme:
+                    values = list(source_stat)
+                    values[0] = stat.S_IFLNK | 0o777
+                    return os.stat_result(values)
+                return source_stat
+
+            with mock.patch.object(Path, "lstat", lstat_with_link):
+                with self.assertRaisesRegex(
+                    verify_release.VerificationError, "contains a link"
+                ):
+                    verify_release.read_public_bytes(public_root, "README.md")
+
+    def test_hardlinked_public_source_is_rejected(self) -> None:
+        with tempfile.TemporaryDirectory(dir=ROOT / "dist") as temporary:
+            temporary_root = Path(temporary)
+            public_root = temporary_root / "source"
+            self._public_tree(public_root)
+            linked_readme = public_root / "README.md"
+            external = temporary_root / "external-readme.md"
+            external.write_bytes(linked_readme.read_bytes())
+            linked_readme.unlink()
+            try:
+                os.link(external, linked_readme)
+            except OSError as exc:
+                self.skipTest(f"hardlinks are unavailable: {exc}")
+
+            with self.assertRaisesRegex(
+                verify_release.VerificationError, "hardlinked"
+            ):
+                verify_release.verify_tree(public_root)
+
     def test_linked_public_parent_is_rejected_without_platform_link_support(self) -> None:
         with tempfile.TemporaryDirectory(dir=ROOT / "dist") as temporary:
             public_root = Path(temporary) / "source"
@@ -249,6 +311,7 @@ class ReleaseVerifierTests(unittest.TestCase):
                         st_mode=source_stat.st_mode,
                         st_dev=source_stat.st_dev,
                         st_ino=source_stat.st_ino,
+                        st_nlink=1,
                         st_file_attributes=reparse_flag,
                     )
                 return source_stat
@@ -274,6 +337,7 @@ class ReleaseVerifierTests(unittest.TestCase):
                 st_mode=stat.S_IFREG | 0o644,
                 st_dev=source_stat.st_dev,
                 st_ino=source_stat.st_ino + 1,
+                st_nlink=1,
             )
             with mock.patch.object(
                 verify_release.os, "fstat", return_value=changed_stat
@@ -282,6 +346,181 @@ class ReleaseVerifierTests(unittest.TestCase):
                     verify_release.VerificationError, "changed while reading"
                 ):
                     verify_release.read_public_bytes(public_root, "README.md")
+
+    def test_archive_hardlink_is_rejected_before_reading(self) -> None:
+        with tempfile.TemporaryDirectory(dir=ROOT / "dist") as temporary:
+            temporary_root = Path(temporary)
+            original = temporary_root / "original.zip"
+            linked = temporary_root / "linked.zip"
+            original.write_bytes(verify_release.canonical_archive_bytes(ROOT))
+            try:
+                os.link(original, linked)
+            except OSError as exc:
+                self.skipTest(f"hardlinks are unavailable: {exc}")
+
+            with self.assertRaisesRegex(
+                verify_release.VerificationError, "hardlinked"
+            ):
+                verify_release.verify_archive(ROOT, linked)
+
+    def test_builder_rejects_hardlinked_output_without_touching_victim(self) -> None:
+        with tempfile.TemporaryDirectory(dir=ROOT / "dist") as temporary:
+            temporary_root = Path(temporary)
+            public_root = temporary_root / "source"
+            self._public_tree(public_root)
+            output = public_root / "dist" / "archive.zip"
+            output.parent.mkdir()
+            victim = temporary_root / "victim.txt"
+            sentinel = b"synthetic victim must survive"
+            victim.write_bytes(sentinel)
+            try:
+                os.link(victim, output)
+            except OSError as exc:
+                self.skipTest(f"hardlinks are unavailable: {exc}")
+
+            with self.assertRaisesRegex(
+                verify_release.VerificationError, "output path is hardlinked"
+            ):
+                build_source_archive.build(public_root, output)
+            self.assertEqual(victim.read_bytes(), sentinel)
+            self.assertEqual(output.read_bytes(), sentinel)
+
+    def test_builder_rejects_symlinked_output_without_touching_victim(self) -> None:
+        with tempfile.TemporaryDirectory(dir=ROOT / "dist") as temporary:
+            temporary_root = Path(temporary)
+            public_root = temporary_root / "source"
+            self._public_tree(public_root)
+            output = public_root / "dist" / "archive.zip"
+            output.parent.mkdir()
+            victim = temporary_root / "victim.txt"
+            sentinel = b"synthetic symlink victim must survive"
+            victim.write_bytes(sentinel)
+            try:
+                output.symlink_to(victim)
+            except NotImplementedError as exc:
+                self.skipTest(f"output symlinks are unavailable: {exc}")
+            except OSError as exc:
+                if exc.errno in {errno.EACCES, errno.EPERM} or getattr(
+                    exc, "winerror", None
+                ) == 1314:
+                    self.skipTest(f"output symlinks are unavailable: {exc}")
+                raise
+
+            with self.assertRaisesRegex(
+                verify_release.VerificationError, "output path is a link"
+            ):
+                build_source_archive.build(public_root, output)
+            self.assertEqual(victim.read_bytes(), sentinel)
+
+    def test_builder_atomically_replaces_existing_regular_output(self) -> None:
+        with tempfile.TemporaryDirectory(dir=ROOT / "dist") as temporary:
+            public_root = Path(temporary) / "source"
+            self._public_tree(public_root)
+            output = public_root / "dist" / "archive.zip"
+            output.parent.mkdir()
+            output.write_bytes(b"old archive")
+
+            digest = build_source_archive.build(public_root, output)
+
+            verify_release.verify_archive(public_root, output)
+            self.assertEqual(digest, hashlib.sha256(output.read_bytes()).hexdigest())
+
+    def test_builder_rejects_source_file_as_output_before_mutation(self) -> None:
+        with tempfile.TemporaryDirectory(dir=ROOT / "dist") as temporary:
+            public_root = Path(temporary) / "source"
+            self._public_tree(public_root)
+            output = public_root / "README.md"
+            original = output.read_bytes()
+
+            with self.assertRaisesRegex(
+                verify_release.VerificationError, "must be under dist"
+            ):
+                build_source_archive.build(public_root, output)
+            self.assertEqual(output.read_bytes(), original)
+
+    def test_builder_rejects_reparse_output_parent(self) -> None:
+        with tempfile.TemporaryDirectory(dir=ROOT / "dist") as temporary:
+            public_root = Path(temporary) / "source"
+            self._public_tree(public_root)
+            output_parent = public_root / "dist"
+            output_parent.mkdir()
+            output = output_parent / "archive.zip"
+            original_lstat = Path.lstat
+
+            def lstat_with_reparse(path: Path) -> object:
+                source_stat = original_lstat(path)
+                if path == output_parent:
+                    return SimpleNamespace(
+                        st_mode=source_stat.st_mode,
+                        force_reparse=True,
+                    )
+                return source_stat
+
+            with mock.patch.object(
+                build_source_archive,
+                "_is_windows_reparse_point",
+                side_effect=lambda source_stat: getattr(
+                    source_stat, "force_reparse", False
+                ),
+            ), mock.patch.object(Path, "lstat", lstat_with_reparse):
+                with self.assertRaisesRegex(
+                    verify_release.VerificationError,
+                    "output directory contains a link",
+                ):
+                    build_source_archive.build(public_root, output)
+
+    @unittest.skipUnless(os.name == "nt", "Windows junction integration test")
+    def test_builder_rejects_real_windows_junction_output_parent(self) -> None:
+        with tempfile.TemporaryDirectory(dir=ROOT / "dist") as temporary:
+            temporary_root = Path(temporary)
+            public_root = temporary_root / "source"
+            self._public_tree(public_root)
+            target = temporary_root / "external-output"
+            target.mkdir()
+            junction = public_root / "dist"
+            created = subprocess.run(
+                ["cmd.exe", "/d", "/c", "mklink", "/J", str(junction), str(target)],
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+            self.assertEqual(created.returncode, 0, created.stderr or created.stdout)
+            try:
+                junction_stat = junction.lstat()
+                self.assertTrue(
+                    verify_release._is_windows_reparse_point(junction_stat)
+                )
+                with self.assertRaisesRegex(
+                    verify_release.VerificationError,
+                    "output directory contains a link",
+                ):
+                    build_source_archive.build(public_root, junction / "archive.zip")
+                self.assertEqual(tuple(target.iterdir()), ())
+            finally:
+                os.rmdir(junction)
+            self.assertTrue(target.is_dir())
+
+    def test_builder_preserves_prior_output_when_staged_verification_fails(self) -> None:
+        with tempfile.TemporaryDirectory(dir=ROOT / "dist") as temporary:
+            public_root = Path(temporary) / "source"
+            self._public_tree(public_root)
+            output = public_root / "dist" / "archive.zip"
+            output.parent.mkdir()
+            original = b"previous reviewed archive"
+            output.write_bytes(original)
+
+            with mock.patch.object(
+                build_source_archive,
+                "verify_archive",
+                side_effect=verify_release.VerificationError("synthetic failure"),
+            ):
+                with self.assertRaisesRegex(
+                    verify_release.VerificationError, "synthetic failure"
+                ):
+                    build_source_archive.build(public_root, output)
+
+            self.assertEqual(output.read_bytes(), original)
+            self.assertEqual(tuple(output.parent.glob(".archive.zip.*.tmp")), ())
 
     def test_appended_archive_bytes_are_rejected(self) -> None:
         with tempfile.TemporaryDirectory(dir=ROOT / "dist") as temporary:

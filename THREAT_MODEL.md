@@ -7,7 +7,9 @@
 - predictable behavior for empty, mixed, and one-shot inputs;
 - availability of the calling check;
 - integrity of the exact public source archive and exclusion of private or
-  unreviewed material.
+  unreviewed material;
+- integrity of pre-existing files addressed by an archive output path; and
+- reproducibility and dependency integrity of the package build environment.
 
 ## Trust boundaries
 
@@ -16,11 +18,14 @@ source, choose the initial verdict and exit code, and report success or failure
 honestly. The helper begins only after those decisions. Any log, telemetry,
 policy engine, or executor that consumes the assessment is outside this package.
 
-The source-release boundary starts at the local public tree. The builder and
-verifier trust reviewed regular file contents, but they do not trust filesystem
-links, special files, ZIP layout, entry metadata, or bytes outside ZIP entries.
-Git history, provider permissions, hosted checks, and tag creation remain
-separate maintainer-controlled boundaries.
+The source-release boundary starts at the local public tree and an exclusively
+controlled output directory. The builder and verifier trust reviewed regular
+file contents, but they do not trust filesystem links, special files, ZIP
+layout, entry metadata, bytes outside ZIP entries, or a pre-existing output
+entry. Package-build acquisition trusts the selected index only to return bytes
+matching the reviewed lock hashes. The interpreter, bootstrap installer, hosted
+runner image, Git history, provider permissions, hosted checks, release
+attestation, and tag creation remain separate maintainer-controlled boundaries.
 
 ## Addressed threats
 
@@ -37,12 +42,21 @@ separate maintainer-controlled boundaries.
 | An unreadable source preserves a success exit code | Unknown assessments force exit `2`. |
 | A known outcome uses the reserved unknown exit code | Requested known-outcome codes are restricted to pass `0` or failure `1`. |
 | A known outcome uses the reserved unknown verdict | Requested verdict text cannot be the reserved literal `UNKNOWN`. |
-| An allowlisted source path links to excluded content | Tree verification rejects symbolic links, Windows reparse points, and other non-regular entries before reading. |
+| Verdict-looking text is mistaken for a machine outcome | Recommended `assess_check()` requires a boolean and derives exit `0`/`1`; lower-level independent text/code semantics are explicit. |
+| An allowlisted source path links to excluded content | Tree verification rejects symbolic links, Windows reparse points, hardlinks, and other non-regular entries before reading. |
 | A ZIP hides unreviewed leading, trailing, or local-header-only bytes | Verification compares the complete supplied ZIP byte for byte with the canonical deterministic build. |
+| Archive verification observes different files across multiple opens | Verification snapshots one identity-checked regular archive and validates those exact bytes. |
+| Building through an output hardlink or symlink truncates another file | The builder rejects linked outputs, stages to an exclusive sibling, verifies first, and atomically replaces the destination entry. |
+| Failed generation replaces a prior reviewed archive with partial bytes | Publication occurs only after the staged archive passes exact verification. |
+| A source build silently resolves different backend dependencies | The complete build closure is version- and hash-locked, installed without index fallback, and used for two compared builds. |
 
 ## Residual risks and non-goals
 
 - `allow_empty=True` can still be misused; review it as a policy exception.
+- `assess_sources()` intentionally defaults its independent exit code to pass;
+  use `assess_check()` or pass an explicit code for known failures.
+- Assessment and read objects have ordinary truthiness, and an empty
+  `problems` tuple means no source-read problem rather than policy success.
 - The helper cannot know how many sources should exist or whether one was
   omitted. A caller needing that guarantee must compare against an expected
   source set before assessment.
@@ -56,9 +70,14 @@ separate maintainer-controlled boundaries.
 - The release verifier is not a comprehensive secret scanner and does not prove
   Git cleanliness, history exclusion, hosted protections, approvals, or tag
   state; the documented release review must establish those separately.
-- The release build workspace must remain immutable or exclusively controlled
-  during verification and archive creation. Link and opened-file identity
-  checks reduce, but do not eliminate, concurrent-writer race conditions.
+- Source and output directories must remain immutable or exclusively controlled
+  during verification and archive creation. Link, opened-file identity,
+  snapshot, and atomic-replacement checks reduce, but do not eliminate,
+  cross-platform races against a concurrently malicious directory owner.
+- The build lock authenticates selected dependency bytes, not their safety,
+  future availability, or the interpreter, bundled pip bootstrap, index, and
+  hosted runner used to acquire and execute them. `--no-index` is not an
+  operating-system network sandbox.
 - Source entries are stored without compression so the supported Python matrix
   can reproduce identical bytes without depending on zlib output. The reviewed
   digest remains authoritative if a future ZIP writer changes its layout.
