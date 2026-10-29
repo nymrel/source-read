@@ -35,9 +35,7 @@ class ReleaseVerifierTests(unittest.TestCase):
         reverse: bool = False,
         symlink: bool = False,
     ) -> None:
-        with zipfile.ZipFile(
-            path, "w", compression=zipfile.ZIP_DEFLATED, compresslevel=9
-        ) as bundle:
+        with zipfile.ZipFile(path, "w", compression=zipfile.ZIP_STORED) as bundle:
             public_files = list(verify_release.PUBLIC_FILES)
             if reverse:
                 public_files.reverse()
@@ -46,18 +44,17 @@ class ReleaseVerifierTests(unittest.TestCase):
                     f"{verify_release.ARCHIVE_PREFIX}/{relative}",
                     date_time=(1980, 1, 1, 0, 0, 0),
                 )
-                info.compress_type = zipfile.ZIP_DEFLATED
+                info.compress_type = zipfile.ZIP_STORED
                 info.create_system = 3
                 mode = 0o120777 if symlink and index == 0 else 0o100644
                 info.external_attr = mode << 16
-                bundle.writestr(info, (ROOT / relative).read_bytes(), compresslevel=9)
+                bundle.writestr(info, (ROOT / relative).read_bytes())
                 if duplicate and index == 0:
                     with warnings.catch_warnings():
                         warnings.simplefilter("ignore", UserWarning)
                         bundle.writestr(
                             info,
                             (ROOT / relative).read_bytes(),
-                            compresslevel=9,
                         )
 
     def _public_tree(self, root: Path) -> None:

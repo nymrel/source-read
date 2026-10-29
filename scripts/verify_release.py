@@ -253,22 +253,17 @@ def canonical_archive_bytes(root: Path) -> bytes:
     with zipfile.ZipFile(
         output,
         "w",
-        compression=zipfile.ZIP_DEFLATED,
-        compresslevel=9,
+        compression=zipfile.ZIP_STORED,
     ) as bundle:
         for relative in PUBLIC_FILES:
             info = zipfile.ZipInfo(
                 filename=f"{ARCHIVE_PREFIX}/{relative}",
                 date_time=(1980, 1, 1, 0, 0, 0),
             )
-            info.compress_type = zipfile.ZIP_DEFLATED
+            info.compress_type = zipfile.ZIP_STORED
             info.create_system = 3
             info.external_attr = 0o100644 << 16
-            bundle.writestr(
-                info,
-                read_public_bytes(root, relative),
-                compresslevel=9,
-            )
+            bundle.writestr(info, read_public_bytes(root, relative))
     return output.getvalue()
 
 
@@ -294,7 +289,7 @@ def verify_archive(root: Path, archive: Path) -> None:
             mode = (info.external_attr >> 16) & 0xFFFF
             if info.create_system != 3 or mode != 0o100644 or info.is_dir():
                 raise VerificationError(f"archive entry is not a regular 0644 file: {info.filename}")
-            if info.compress_type != zipfile.ZIP_DEFLATED:
+            if info.compress_type != zipfile.ZIP_STORED:
                 raise VerificationError(f"unexpected compression method: {info.filename}")
             if info.extra or info.comment:
                 raise VerificationError(f"archive entry has unreviewed metadata: {info.filename}")

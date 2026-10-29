@@ -59,5 +59,6 @@ separate maintainer-controlled boundaries.
 - The release build workspace must remain immutable or exclusively controlled
   during verification and archive creation. Link and opened-file identity
   checks reduce, but do not eliminate, concurrent-writer race conditions.
-- Repeated source builds prove byte equality in one environment. Cross-version
-  or cross-zlib reproducibility is not guaranteed.
+- Source entries are stored without compression so the supported Python matrix
+  can reproduce identical bytes without depending on zlib output. The reviewed
+  digest remains authoritative if a future ZIP writer changes its layout.
