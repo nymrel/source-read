@@ -355,7 +355,7 @@ def verify_tree(root: Path) -> None:
         '- os: ubuntu-latest\n            python-version: "3.12.14"',
         '- os: ubuntu-latest\n            python-version: "3.13.15"',
         '- os: ubuntu-latest\n            python-version: "3.14.7"',
-        '- os: windows-latest\n            python-version: "3.11.16"',
+        '- os: windows-2022\n            python-version: "3.11.16"',
         '- os: windows-latest\n            python-version: "3.14.7"',
         '- os: macos-latest\n            python-version: "3.14.7"',
     )
@@ -385,9 +385,10 @@ def verify_tree(root: Path) -> None:
         "if set(names) != expected:",
         "if len(row_names) != len(set(row_names)):",
         "if set(row_names) != expected:",
-        "wheel metadata field mismatch",
-        "wheel metadata header allowlist mismatch",
-        "wheel README payload differs from reviewed source",
+        "wheel METADATA differs from reviewed canonical bytes",
+        "wheel compressed payload mismatch",
+        "info.reserved != 0",
+        "info.volume != 0",
         "wheel ZIP envelope mismatch",
         "publish_bytes(",
     ):

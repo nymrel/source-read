@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import base64
 import csv
-from email.parser import Parser
 import hashlib
 import io
 import os
@@ -14,6 +13,7 @@ import sys
 import tempfile
 import venv
 import zipfile
+import zlib
 from pathlib import Path
 
 from build_source_archive import publish_bytes
@@ -116,6 +116,24 @@ def _build_wheel(python: Path, destination: Path) -> Path:
     return wheels[0]
 
 
+def _verify_deflate_member(compressed: bytes, info: zipfile.ZipInfo) -> None:
+    inflater = zlib.decompressobj(-zlib.MAX_WBITS)
+    try:
+        payload = inflater.decompress(compressed) + inflater.flush()
+    except zlib.error as error:
+        raise RuntimeError(
+            f"wheel compressed payload is invalid: {info.filename}"
+        ) from error
+    if (
+        not inflater.eof
+        or inflater.unused_data
+        or inflater.unconsumed_tail
+        or len(payload) != info.file_size
+        or zlib.crc32(payload) & 0xFFFFFFFF != info.CRC
+    ):
+        raise RuntimeError(f"wheel compressed payload mismatch: {info.filename}")
+
+
 def _verify_wheel_envelope(
     wheel_bytes: bytes,
     bundle: zipfile.ZipFile,
@@ -130,13 +148,16 @@ def _verify_wheel_envelope(
         expected_external = (
             0x81A40000 if info.filename.startswith("source_read/") else 0x01A40000
         )
+        expected_create_system = 0 if os.name == "nt" else 3
         if (
             info.date_time != (1980, 1, 1, 0, 0, 0)
             or info.compress_type != zipfile.ZIP_DEFLATED
             or info.flag_bits != 0
-            or info.create_system != 0
+            or info.create_system != expected_create_system
             or info.create_version != 20
             or info.extract_version != 20
+            or info.reserved != 0
+            or info.volume != 0
             or info.internal_attr != 0
             or info.external_attr != expected_external
             or info.extra
@@ -177,6 +198,9 @@ def _verify_wheel_envelope(
         ):
             raise RuntimeError(f"wheel ZIP local header mismatch: {info.filename}")
         member_end = name_end + extra_length + info.compress_size
+        _verify_deflate_member(
+            wheel_bytes[name_end + extra_length : member_end], info
+        )
         next_offset = (
             infos[index + 1].header_offset
             if index + 1 < len(infos)
@@ -248,55 +272,36 @@ def _verify_wheel_metadata(wheel: Path) -> None:
             raise RuntimeError("installed package core differs from source")
         if payloads[f"{prefix}licenses/LICENSE"] != (ROOT / "LICENSE").read_bytes():
             raise RuntimeError("wheel license differs from reviewed license")
-        metadata = payloads[f"{prefix}METADATA"].decode("utf-8")
+        metadata = payloads[f"{prefix}METADATA"]
         wheel_metadata = payloads[f"{prefix}WHEEL"].decode("utf-8")
         record = payloads[f"{prefix}RECORD"].decode("utf-8")
-    parsed_metadata = Parser().parsestr(metadata)
-    expected_fields = {
-        "Metadata-Version": "2.5",
-        "Name": "source-read",
-        "Version": PROJECT_VERSION,
-        "Summary": "Keep unreadable sources from being mistaken for clean results.",
-        "Author": "Nymrel",
-        "License-Expression": "MIT",
-        "License-File": "LICENSE",
-        "Keywords": "source-read,tri-state,truthfulness,validation",
-        "Requires-Python": ">=3.11",
-        "Description-Content-Type": "text/markdown",
-    }
-    for field, expected_value in expected_fields.items():
-        if parsed_metadata.get_all(field, []) != [expected_value]:
-            raise RuntimeError(f"wheel metadata field mismatch: {field}")
-    allowed_headers = set(expected_fields) | {"Project-URL", "Classifier"}
-    if {field.casefold() for field in parsed_metadata.keys()} != {
-        field.casefold() for field in allowed_headers
-    }:
-        raise RuntimeError("wheel metadata header allowlist mismatch")
-    expected_urls = [
-        "Homepage, https://github.com/nymrel/source-read",
-        "Source, https://github.com/nymrel/source-read",
-        "Issues, https://github.com/nymrel/source-read/issues",
-    ]
-    if parsed_metadata.get_all("Project-URL", []) != expected_urls:
-        raise RuntimeError("wheel project URLs differ from reviewed metadata")
-    expected_classifiers = [
-        "Development Status :: 3 - Alpha",
-        "Intended Audience :: Developers",
-        "License :: OSI Approved :: MIT License",
-        "Programming Language :: Python :: 3",
-        "Programming Language :: Python :: 3 :: Only",
-        "Programming Language :: Python :: 3.11",
-        "Programming Language :: Python :: 3.12",
-        "Programming Language :: Python :: 3.13",
-        "Programming Language :: Python :: 3.14",
-        "Topic :: Software Development :: Quality Assurance",
-    ]
-    if parsed_metadata.get_all("Classifier", []) != expected_classifiers:
-        raise RuntimeError("wheel classifiers differ from reviewed metadata")
-    if parsed_metadata.get_all("Requires-Dist"):
-        raise RuntimeError("runtime wheel unexpectedly declares dependencies")
-    if parsed_metadata.get_payload().encode("utf-8") != (ROOT / "README.md").read_bytes():
-        raise RuntimeError("wheel README payload differs from reviewed source")
+    expected_metadata = (
+        "Metadata-Version: 2.5\n"
+        "Name: source-read\n"
+        f"Version: {PROJECT_VERSION}\n"
+        "Summary: Keep unreadable sources from being mistaken for clean results.\n"
+        "Project-URL: Homepage, https://github.com/nymrel/source-read\n"
+        "Project-URL: Source, https://github.com/nymrel/source-read\n"
+        "Project-URL: Issues, https://github.com/nymrel/source-read/issues\n"
+        "Author: Nymrel\n"
+        "License-Expression: MIT\n"
+        "License-File: LICENSE\n"
+        "Keywords: source-read,tri-state,truthfulness,validation\n"
+        "Classifier: Development Status :: 3 - Alpha\n"
+        "Classifier: Intended Audience :: Developers\n"
+        "Classifier: License :: OSI Approved :: MIT License\n"
+        "Classifier: Programming Language :: Python :: 3\n"
+        "Classifier: Programming Language :: Python :: 3 :: Only\n"
+        "Classifier: Programming Language :: Python :: 3.11\n"
+        "Classifier: Programming Language :: Python :: 3.12\n"
+        "Classifier: Programming Language :: Python :: 3.13\n"
+        "Classifier: Programming Language :: Python :: 3.14\n"
+        "Classifier: Topic :: Software Development :: Quality Assurance\n"
+        "Requires-Python: >=3.11\n"
+        "Description-Content-Type: text/markdown\n\n"
+    ).encode("utf-8") + (ROOT / "README.md").read_bytes()
+    if metadata != expected_metadata:
+        raise RuntimeError("wheel METADATA differs from reviewed canonical bytes")
     if wheel_metadata != (
         "Wheel-Version: 1.0\n"
         "Generator: hatchling 1.32.3\n"

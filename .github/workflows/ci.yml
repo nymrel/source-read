@@ -31,7 +31,7 @@ jobs:
             python-version: "3.13.15"
           - os: ubuntu-latest
             python-version: "3.14.7"
-          - os: windows-latest
+          - os: windows-2022
             python-version: "3.11.16"
           - os: windows-latest
             python-version: "3.14.7"

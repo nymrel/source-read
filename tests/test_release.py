@@ -13,6 +13,7 @@ import tempfile
 import unittest
 import warnings
 import zipfile
+import zlib
 from pathlib import Path
 from types import SimpleNamespace
 from unittest import mock
@@ -78,6 +79,7 @@ class ReleaseVerifierTests(unittest.TestCase):
         duplicate_record: bool = False,
         extra_metadata_header: str | None = None,
         metadata_name: str = "source-read",
+        metadata_prefix: str = "",
     ) -> None:
         prefix = f"source_read-{verify_release.PROJECT_VERSION}.dist-info/"
         record_name = f"{prefix}RECORD"
@@ -108,7 +110,7 @@ class ReleaseVerifierTests(unittest.TestCase):
         )
         if extra_metadata_header is not None:
             metadata_headers += f"{extra_metadata_header}\n"
-        metadata = (metadata_headers + "\n").encode() + (
+        metadata = (metadata_prefix + metadata_headers + "\n").encode() + (
             ROOT / "README.md"
         ).read_bytes()
         payloads = {
@@ -142,7 +144,7 @@ class ReleaseVerifierTests(unittest.TestCase):
             for name, payload in payloads.items():
                 info = zipfile.ZipInfo(name, date_time=(1980, 1, 1, 0, 0, 0))
                 info.compress_type = zipfile.ZIP_DEFLATED
-                info.create_system = 0
+                info.create_system = 0 if os.name == "nt" else 3
                 info.create_version = 20
                 info.extract_version = 20
                 info.external_attr = (
@@ -293,14 +295,14 @@ class ReleaseVerifierTests(unittest.TestCase):
             workflow_path = public_root / ".github" / "workflows" / "ci.yml"
             workflow_path.write_bytes(
                 workflow_path.read_bytes().replace(
-                    b'          - os: windows-latest\n            python-version: "3.11.16"\n',
+                    b'          - os: windows-2022\n            python-version: "3.11.16"\n',
                     b"",
                 )
             )
 
             with self.assertRaisesRegex(
                 verify_release.VerificationError,
-                "workflow requirement missing: - os: windows-latest",
+                "workflow requirement missing: - os: windows-2022",
             ):
                 verify_release.verify_tree(public_root)
 
@@ -775,7 +777,7 @@ class ReleaseVerifierTests(unittest.TestCase):
             wheel = Path(temporary) / "source_read-0.2.0-py3-none-any.whl"
             self._wheel(wheel, metadata_name="substituted")
 
-            with self.assertRaisesRegex(RuntimeError, "field mismatch: Name"):
+            with self.assertRaisesRegex(RuntimeError, "canonical bytes"):
                 verify_package_build._verify_wheel_metadata(wheel)
 
     def test_wheel_verifier_rejects_extra_metadata_header(self) -> None:
@@ -783,7 +785,15 @@ class ReleaseVerifierTests(unittest.TestCase):
             wheel = Path(temporary) / "source_read-0.2.0-py3-none-any.whl"
             self._wheel(wheel, extra_metadata_header="Provides-Extra: injected")
 
-            with self.assertRaisesRegex(RuntimeError, "header allowlist mismatch"):
+            with self.assertRaisesRegex(RuntimeError, "canonical bytes"):
+                verify_package_build._verify_wheel_metadata(wheel)
+
+    def test_wheel_verifier_rejects_unix_from_metadata_prefix(self) -> None:
+        with tempfile.TemporaryDirectory(dir=ROOT / "dist") as temporary:
+            wheel = Path(temporary) / "source_read-0.2.0-py3-none-any.whl"
+            self._wheel(wheel, metadata_prefix="From injected-unreviewed\n")
+
+            with self.assertRaisesRegex(RuntimeError, "canonical bytes"):
                 verify_package_build._verify_wheel_metadata(wheel)
 
     def test_wheel_verifier_rejects_trailing_bytes(self) -> None:
@@ -795,6 +805,40 @@ class ReleaseVerifierTests(unittest.TestCase):
 
             with self.assertRaisesRegex(RuntimeError, "ZIP envelope mismatch"):
                 verify_package_build._verify_wheel_metadata(wheel)
+
+    def test_wheel_verifier_rejects_nonzero_central_reserved_fields(self) -> None:
+        with tempfile.TemporaryDirectory(dir=ROOT / "dist") as temporary:
+            wheel = Path(temporary) / "source_read-0.2.0-py3-none-any.whl"
+            self._wheel(wheel)
+            original = wheel.read_bytes()
+            central = original.find(b"PK\x01\x02")
+            self.assertGreaterEqual(central, 0)
+
+            for offset in (7, 34):
+                with self.subTest(offset=offset):
+                    mutated = bytearray(original)
+                    mutated[central + offset] = 1
+                    wheel.write_bytes(mutated)
+                    with self.assertRaisesRegex(
+                        RuntimeError, "member metadata mismatch"
+                    ):
+                        verify_package_build._verify_wheel_metadata(wheel)
+
+    def test_wheel_verifier_rejects_bytes_after_deflate_eof(self) -> None:
+        payload = b"synthetic reviewed member"
+        compressor = zlib.compressobj(wbits=-zlib.MAX_WBITS)
+        compressed = compressor.compress(payload) + compressor.flush()
+        info = SimpleNamespace(
+            filename="synthetic.txt",
+            file_size=len(payload),
+            CRC=zlib.crc32(payload) & 0xFFFFFFFF,
+        )
+
+        verify_package_build._verify_deflate_member(compressed, info)
+        with self.assertRaisesRegex(RuntimeError, "compressed payload mismatch"):
+            verify_package_build._verify_deflate_member(
+                compressed + b"unreviewed compressed extent", info
+            )
 
     def test_builder_rejects_reparse_output_parent(self) -> None:
         with tempfile.TemporaryDirectory(dir=ROOT / "dist") as temporary:
