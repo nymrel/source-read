@@ -3,9 +3,10 @@
 [![CI](https://github.com/nymrel/source-read/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/nymrel/source-read/actions/workflows/ci.yml)
 
 Source Read is a small, standard-library-only helper that prevents an
-unreadable source from being mistaken for a clean result. Version 0.2.0 is a
-source-only release under the MIT license; no package-registry publication is
-configured. See [RELEASING.md](RELEASING.md).
+unreadable source from being mistaken for a clean result. This source tree
+identifies itself as version 0.2.0. Versioned releases are source-only under
+the MIT license; no package-registry publication is configured. See
+[RELEASING.md](RELEASING.md).
 
 The helper preserves a distinction that checks often lose:
 
@@ -22,7 +23,8 @@ Linux, Python 3.11 and 3.14 on Windows, and Python 3.14 on macOS. Newer Python
 versions are eligible under the package metadata but are not yet validated.
 
 Source Read is not published on PyPI, so do not use a bare
-`pip install source-read` command. Install the reviewed source tag instead:
+`pip install source-read` command. For a published release, install the
+reviewed source tag instead:
 
 ```text
 git clone --branch v0.2.0 --depth 1 https://github.com/nymrel/source-read.git
@@ -184,11 +186,13 @@ a registry or create a hosted release.
 
 ## Releases
 
-The current supported source release is
-[`v0.2.0`](https://github.com/nymrel/source-read/releases/tag/v0.2.0). Its
-release page records the exact tag target, source-archive digest, independent
-review, hosted checks, and GitHub asset attestation. Tagged documentation is
-immutable release-time evidence; the [current main documentation](https://github.com/nymrel/source-read/blob/main/README.md)
+GitHub's [release list](https://github.com/nymrel/source-read/releases) is the
+authoritative record of published versions. The
+[`v0.2.0` release page](https://github.com/nymrel/source-read/releases/tag/v0.2.0),
+once published, records the exact tag target, source-archive digest,
+independent review, hosted checks, and GitHub asset attestation. Tagged
+documentation is immutable release-time evidence; the
+[current main documentation](https://github.com/nymrel/source-read/blob/main/README.md)
 may contain later guidance.
 
 The historical initial release remains available as immutable evidence:

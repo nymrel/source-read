@@ -33,8 +33,11 @@ For a release version `X.Y.Z`:
    commit, tree, and archive digest. Record limits and skipped checks honestly.
 4. Open a pull request, wait for every required check, resolve conversations,
    and record explicit action-time maintainer approval in the release
-   coordination record. When an eligible independent organization reviewer is
-   available, also require provider-enforced peer approval.
+   coordination record. An approval already given in the active release task
+   may satisfy this gate only when its scope still covers the exact action and
+   candidate; record its timestamp and scope. Do not describe task approval as
+   a provider-enforced peer review. When an eligible independent organization
+   reviewer is available, also require provider-enforced peer approval.
 5. Merge only the reviewed candidate and verify the public commit, tree, hosted
    CI, CodeQL, and repository security posture. Rebuild the archive from that
    exact commit and confirm the same digest.

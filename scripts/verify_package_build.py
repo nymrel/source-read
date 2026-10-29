@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import base64
 import csv
+from email.parser import Parser
 import hashlib
 import io
 import os
@@ -15,7 +16,7 @@ import zipfile
 from pathlib import Path
 
 from build_source_archive import publish_bytes
-from verify_release import PROJECT_VERSION, verify_tree
+from verify_release import PROJECT_VERSION, read_regular_bytes, verify_tree
 
 ROOT = Path(__file__).resolve().parents[1]
 LOCK = ROOT / "requirements" / "build.lock"
@@ -116,8 +117,11 @@ def _build_wheel(python: Path, destination: Path) -> Path:
 
 def _verify_wheel_metadata(wheel: Path) -> None:
     prefix = f"source_read-{PROJECT_VERSION}.dist-info/"
-    with zipfile.ZipFile(wheel) as bundle:
-        names = set(bundle.namelist())
+    wheel_bytes = read_regular_bytes(wheel, "wheel")
+    with zipfile.ZipFile(io.BytesIO(wheel_bytes)) as bundle:
+        names = bundle.namelist()
+        if len(names) != len(set(names)):
+            raise RuntimeError("wheel contains duplicate entries")
         expected = {
             "source_read/__init__.py",
             "source_read/core.py",
@@ -126,41 +130,90 @@ def _verify_wheel_metadata(wheel: Path) -> None:
             f"{prefix}RECORD",
             f"{prefix}licenses/LICENSE",
         }
-        if names != expected:
+        if set(names) != expected:
             raise RuntimeError(
-                f"wheel inventory mismatch; missing={sorted(expected - names)} "
-                f"extra={sorted(names - expected)}"
+                f"wheel inventory mismatch; missing={sorted(expected - set(names))} "
+                f"extra={sorted(set(names) - expected)}"
             )
-        if bundle.read("source_read/__init__.py") != (
+        payloads = {name: bundle.read(name) for name in names}
+        if payloads["source_read/__init__.py"] != (
             ROOT / "src" / "source_read" / "__init__.py"
         ).read_bytes():
             raise RuntimeError("installed package initializer differs from source")
-        if bundle.read("source_read/core.py") != (
+        if payloads["source_read/core.py"] != (
             ROOT / "src" / "source_read" / "core.py"
         ).read_bytes():
             raise RuntimeError("installed package core differs from source")
-        if bundle.read(f"{prefix}licenses/LICENSE") != (ROOT / "LICENSE").read_bytes():
+        if payloads[f"{prefix}licenses/LICENSE"] != (ROOT / "LICENSE").read_bytes():
             raise RuntimeError("wheel license differs from reviewed license")
-        metadata = bundle.read(f"{prefix}METADATA").decode("utf-8")
-        wheel_metadata = bundle.read(f"{prefix}WHEEL").decode("utf-8")
-        record = bundle.read(f"{prefix}RECORD").decode("utf-8")
-    if f"Version: {PROJECT_VERSION}\n" not in metadata:
-        raise RuntimeError("wheel metadata version mismatch")
-    if "Requires-Dist:" in metadata:
+        metadata = payloads[f"{prefix}METADATA"].decode("utf-8")
+        wheel_metadata = payloads[f"{prefix}WHEEL"].decode("utf-8")
+        record = payloads[f"{prefix}RECORD"].decode("utf-8")
+    parsed_metadata = Parser().parsestr(metadata)
+    expected_fields = {
+        "Metadata-Version": "2.5",
+        "Name": "source-read",
+        "Version": PROJECT_VERSION,
+        "Summary": "Keep unreadable sources from being mistaken for clean results.",
+        "Author": "Nymrel",
+        "License-Expression": "MIT",
+        "License-File": "LICENSE",
+        "Keywords": "source-read,tri-state,truthfulness,validation",
+        "Requires-Python": ">=3.11",
+        "Description-Content-Type": "text/markdown",
+    }
+    for field, expected_value in expected_fields.items():
+        if parsed_metadata.get_all(field, []) != [expected_value]:
+            raise RuntimeError(f"wheel metadata field mismatch: {field}")
+    expected_urls = [
+        "Homepage, https://github.com/nymrel/source-read",
+        "Source, https://github.com/nymrel/source-read",
+        "Issues, https://github.com/nymrel/source-read/issues",
+    ]
+    if parsed_metadata.get_all("Project-URL", []) != expected_urls:
+        raise RuntimeError("wheel project URLs differ from reviewed metadata")
+    expected_classifiers = [
+        "Development Status :: 3 - Alpha",
+        "Intended Audience :: Developers",
+        "License :: OSI Approved :: MIT License",
+        "Programming Language :: Python :: 3",
+        "Programming Language :: Python :: 3 :: Only",
+        "Programming Language :: Python :: 3.11",
+        "Programming Language :: Python :: 3.12",
+        "Programming Language :: Python :: 3.13",
+        "Programming Language :: Python :: 3.14",
+        "Topic :: Software Development :: Quality Assurance",
+    ]
+    if parsed_metadata.get_all("Classifier", []) != expected_classifiers:
+        raise RuntimeError("wheel classifiers differ from reviewed metadata")
+    if parsed_metadata.get_all("Requires-Dist"):
         raise RuntimeError("runtime wheel unexpectedly declares dependencies")
-    if "Tag: py3-none-any\n" not in wheel_metadata:
-        raise RuntimeError("wheel compatibility tag mismatch")
+    if parsed_metadata.get_payload().encode("utf-8") != (ROOT / "README.md").read_bytes():
+        raise RuntimeError("wheel README payload differs from reviewed source")
+    if wheel_metadata != (
+        "Wheel-Version: 1.0\n"
+        "Generator: hatchling 1.32.3\n"
+        "Root-Is-Purelib: true\n"
+        "Tag: py3-none-any\n"
+    ):
+        raise RuntimeError("wheel compatibility metadata mismatch")
 
-    rows = {row[0]: row[1:] for row in csv.reader(io.StringIO(record))}
-    if set(rows) != expected:
+    rows = list(csv.reader(io.StringIO(record)))
+    if any(len(row) != 3 for row in rows):
+        raise RuntimeError("wheel RECORD row shape mismatch")
+    row_names = [row[0] for row in rows]
+    if len(row_names) != len(set(row_names)):
+        raise RuntimeError("wheel RECORD contains duplicate rows")
+    if set(row_names) != expected:
         raise RuntimeError("wheel RECORD inventory mismatch")
+    record_entries = {row[0]: row[1:] for row in rows}
     for name in sorted(expected):
-        digest, size = rows[name]
+        digest, size = record_entries[name]
         if name == f"{prefix}RECORD":
             if digest or size:
                 raise RuntimeError("wheel RECORD must not hash itself")
             continue
-        payload = zipfile.Path(wheel, at=name).read_bytes()
+        payload = payloads[name]
         encoded = base64.urlsafe_b64encode(hashlib.sha256(payload).digest()).rstrip(b"=")
         if digest != f"sha256={encoded.decode('ascii')}" or size != str(len(payload)):
             raise RuntimeError(f"wheel RECORD mismatch: {name}")

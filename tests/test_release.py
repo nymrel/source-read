@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import base64
 import contextlib
 import errno
 import hashlib
@@ -21,6 +22,7 @@ sys.path.insert(0, str(ROOT / "scripts"))
 
 import verify_release  # noqa: E402
 import build_source_archive  # noqa: E402
+import verify_package_build  # noqa: E402
 
 
 class ReleaseVerifierTests(unittest.TestCase):
@@ -68,6 +70,78 @@ class ReleaseVerifierTests(unittest.TestCase):
             destination.parent.mkdir(parents=True, exist_ok=True)
             destination.write_bytes((ROOT / relative).read_bytes())
 
+    def _wheel(
+        self,
+        path: Path,
+        *,
+        duplicate_member: bool = False,
+        duplicate_record: bool = False,
+        metadata_name: str = "source-read",
+    ) -> None:
+        prefix = f"source_read-{verify_release.PROJECT_VERSION}.dist-info/"
+        record_name = f"{prefix}RECORD"
+        metadata = (
+            "Metadata-Version: 2.5\n"
+            f"Name: {metadata_name}\n"
+            f"Version: {verify_release.PROJECT_VERSION}\n"
+            "Summary: Keep unreadable sources from being mistaken for clean results.\n"
+            "Project-URL: Homepage, https://github.com/nymrel/source-read\n"
+            "Project-URL: Source, https://github.com/nymrel/source-read\n"
+            "Project-URL: Issues, https://github.com/nymrel/source-read/issues\n"
+            "Author: Nymrel\n"
+            "License-Expression: MIT\n"
+            "License-File: LICENSE\n"
+            "Keywords: source-read,tri-state,truthfulness,validation\n"
+            "Classifier: Development Status :: 3 - Alpha\n"
+            "Classifier: Intended Audience :: Developers\n"
+            "Classifier: License :: OSI Approved :: MIT License\n"
+            "Classifier: Programming Language :: Python :: 3\n"
+            "Classifier: Programming Language :: Python :: 3 :: Only\n"
+            "Classifier: Programming Language :: Python :: 3.11\n"
+            "Classifier: Programming Language :: Python :: 3.12\n"
+            "Classifier: Programming Language :: Python :: 3.13\n"
+            "Classifier: Programming Language :: Python :: 3.14\n"
+            "Classifier: Topic :: Software Development :: Quality Assurance\n"
+            "Requires-Python: >=3.11\n"
+            "Description-Content-Type: text/markdown\n\n"
+        ).encode() + (ROOT / "README.md").read_bytes()
+        payloads = {
+            "source_read/__init__.py": (
+                ROOT / "src" / "source_read" / "__init__.py"
+            ).read_bytes(),
+            "source_read/core.py": (
+                ROOT / "src" / "source_read" / "core.py"
+            ).read_bytes(),
+            f"{prefix}METADATA": metadata,
+            f"{prefix}WHEEL": (
+                b"Wheel-Version: 1.0\n"
+                b"Generator: hatchling 1.32.3\n"
+                b"Root-Is-Purelib: true\n"
+                b"Tag: py3-none-any\n"
+            ),
+            f"{prefix}licenses/LICENSE": (ROOT / "LICENSE").read_bytes(),
+        }
+        rows: list[str] = []
+        for name, payload in payloads.items():
+            digest = base64.urlsafe_b64encode(
+                hashlib.sha256(payload).digest()
+            ).rstrip(b"=").decode("ascii")
+            rows.append(f"{name},sha256={digest},{len(payload)}")
+        if duplicate_record:
+            rows.append(rows[0])
+        rows.append(f"{record_name},,")
+        payloads[record_name] = ("\n".join(rows) + "\n").encode()
+
+        with zipfile.ZipFile(path, "w", compression=zipfile.ZIP_STORED) as bundle:
+            for name, payload in payloads.items():
+                bundle.writestr(name, payload)
+            if duplicate_member:
+                with warnings.catch_warnings():
+                    warnings.simplefilter("ignore", UserWarning)
+                    bundle.writestr(
+                        "source_read/core.py", payloads["source_read/core.py"]
+                    )
+
     def test_public_only_tree_is_valid(self) -> None:
         with mock.patch.object(
             verify_release,
@@ -112,6 +186,19 @@ class ReleaseVerifierTests(unittest.TestCase):
                 self.assertEqual(
                     verify_release._files_under(nested_root), {"example.txt"}
                 )
+
+    @unittest.skipUnless(os.name == "nt", "Windows path-case integration test")
+    def test_ignored_directory_case_alias_is_not_scanned(self) -> None:
+        with tempfile.TemporaryDirectory(dir=ROOT / "dist") as temporary:
+            nested_root = Path(temporary) / "source"
+            ignored = nested_root / "DIST"
+            ignored.mkdir(parents=True)
+            (nested_root / "example.txt").write_text("synthetic", encoding="utf-8")
+            (ignored / "ephemeral.txt").write_text("changing", encoding="utf-8")
+
+            self.assertEqual(
+                verify_release._files_under(nested_root), {"example.txt"}
+            )
 
     def test_unreviewed_tree_file_is_rejected(self) -> None:
         files = set(verify_release.PUBLIC_FILES) | {"unexpected.txt"}
@@ -599,6 +686,60 @@ class ReleaseVerifierTests(unittest.TestCase):
             build_source_archive.build(public_root, output)
 
             verify_release.verify_archive(public_root, output)
+
+    @unittest.skipUnless(os.name == "nt", "Windows extended-path integration test")
+    def test_builder_rebuilds_through_extended_case_alias_of_dist(self) -> None:
+        with tempfile.TemporaryDirectory(dir=ROOT / "dist") as temporary:
+            public_root = Path(temporary) / "source"
+            self._public_tree(public_root)
+            output = Path(
+                "\\\\?\\" + str(public_root / "DIST" / "archive.zip")
+            )
+
+            first = build_source_archive.build(public_root, output)
+            second = build_source_archive.build(public_root, output)
+
+            self.assertEqual(first, second)
+            verify_release.verify_tree(public_root)
+            verify_release.verify_archive(public_root, output)
+
+    def test_wheel_verifier_accepts_one_consistent_snapshot(self) -> None:
+        with tempfile.TemporaryDirectory(dir=ROOT / "dist") as temporary:
+            wheel = Path(temporary) / "source_read-0.2.0-py3-none-any.whl"
+            self._wheel(wheel)
+
+            with mock.patch.object(
+                verify_package_build,
+                "read_regular_bytes",
+                wraps=verify_package_build.read_regular_bytes,
+            ) as reader:
+                verify_package_build._verify_wheel_metadata(wheel)
+
+            reader.assert_called_once_with(wheel, "wheel")
+
+    def test_wheel_verifier_rejects_duplicate_archive_member(self) -> None:
+        with tempfile.TemporaryDirectory(dir=ROOT / "dist") as temporary:
+            wheel = Path(temporary) / "source_read-0.2.0-py3-none-any.whl"
+            self._wheel(wheel, duplicate_member=True)
+
+            with self.assertRaisesRegex(RuntimeError, "duplicate entries"):
+                verify_package_build._verify_wheel_metadata(wheel)
+
+    def test_wheel_verifier_rejects_duplicate_record_row(self) -> None:
+        with tempfile.TemporaryDirectory(dir=ROOT / "dist") as temporary:
+            wheel = Path(temporary) / "source_read-0.2.0-py3-none-any.whl"
+            self._wheel(wheel, duplicate_record=True)
+
+            with self.assertRaisesRegex(RuntimeError, "duplicate rows"):
+                verify_package_build._verify_wheel_metadata(wheel)
+
+    def test_wheel_verifier_rejects_metadata_substitution(self) -> None:
+        with tempfile.TemporaryDirectory(dir=ROOT / "dist") as temporary:
+            wheel = Path(temporary) / "source_read-0.2.0-py3-none-any.whl"
+            self._wheel(wheel, metadata_name="substituted")
+
+            with self.assertRaisesRegex(RuntimeError, "field mismatch: Name"):
+                verify_package_build._verify_wheel_metadata(wheel)
 
     def test_builder_rejects_reparse_output_parent(self) -> None:
         with tempfile.TemporaryDirectory(dir=ROOT / "dist") as temporary:

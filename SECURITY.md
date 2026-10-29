@@ -2,8 +2,10 @@
 
 ## Supported versions
 
-The current `main` branch and the latest `0.2.x` source tag are supported.
-Pre-release branches may change without notice.
+The current `main` branch and the latest published `0.2.x` source tag are
+supported. Until the first `0.2.x` tag is published, the immutable `v0.1.0`
+source release remains supported. Pre-release branches may change without
+notice.
 
 ## Report a security issue
 
@@ -44,13 +46,18 @@ and atomically replaces the destination. It rejects linked output paths,
 redirection in output-directory ancestors, non-regular destinations, and
 attempts to write inside the source tree outside `dist/`, including alternate
 path spellings detected by filesystem identity. A failed staged write or
-verification therefore does not truncate an existing reviewed archive or a
-hardlinked victim.
+pre-replacement verification therefore does not truncate an existing reviewed
+archive or a hardlinked victim. The destination is checked again after atomic
+replacement; a failure at that final check is reported but does not restore the
+prior output, which is another reason to use an exclusively controlled output
+directory and retain reviewed artifacts separately.
 
 Packaging validation consumes the exact SHA-256-locked build closure in
 `requirements/build.lock`, disables index access during each build, compares
-two wheel builds, and installs the result into an isolated runtime environment.
-The runtime package itself has no dependencies.
+two wheel builds, snapshots each wheel through one identity-checked open,
+rejects duplicate archive and RECORD names, verifies every recorded digest
+against that snapshot, and installs the result into an isolated runtime
+environment. The runtime package itself has no dependencies.
 
 Passing the verifier does not prove that Git history is clean, that every
 printable secret pattern is absent, or that hosted repository protections are

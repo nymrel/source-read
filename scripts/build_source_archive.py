@@ -12,11 +12,11 @@ from pathlib import Path
 
 from verify_release import (
     ARCHIVE_PREFIX,
-    IGNORED_PARTS,
     PUBLIC_FILES,
     VerificationError,
     _is_windows_reparse_point,
     canonical_archive_bytes,
+    is_ignored_part,
     verify_archive,
     verify_tree,
 )
@@ -85,7 +85,7 @@ def _source_directory_identities(root: Path) -> dict[tuple[int, int], set[Path]]
         for name in directory_names:
             path = current / name
             record(path)
-            if name not in IGNORED_PARTS:
+            if not is_ignored_part(name):
                 kept.append(name)
         directory_names[:] = kept
     return identities

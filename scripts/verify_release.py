@@ -42,6 +42,7 @@ PUBLIC_FILES = (
 
 LOCAL_ONLY_FILES = ("review/PRIVATE_PROVENANCE.md",)
 IGNORED_PARTS = {"__pycache__", ".git", "dist"}
+NORMALIZED_IGNORED_PARTS = {os.path.normcase(part) for part in IGNORED_PARTS}
 FORBIDDEN_PUBLIC_PATTERNS = (
     re.compile(r"(?i)[a-z]:[\\/](?:users|documents|desktop)[\\/]"),
     re.compile(r"(?i)source (?:blob|commit):\s*[0-9a-f]{40}"),
@@ -65,6 +66,12 @@ class VerificationError(RuntimeError):
     pass
 
 
+def is_ignored_part(name: str) -> bool:
+    """Match ignored path components using the host filesystem's case rules."""
+
+    return os.path.normcase(name) in NORMALIZED_IGNORED_PARTS
+
+
 def _files_under(root: Path) -> set[str]:
     files: set[str] = set()
     for current_text, directory_names, file_names in os.walk(
@@ -73,7 +80,7 @@ def _files_under(root: Path) -> set[str]:
         current = Path(current_text)
         kept_directories: list[str] = []
         for name in directory_names:
-            if name in IGNORED_PARTS:
+            if is_ignored_part(name):
                 continue
             path = current / name
             relative = path.relative_to(root)
@@ -373,8 +380,13 @@ def verify_tree(root: Path) -> None:
         '"--force-reinstall"',
         '"--no-build-isolation"',
         '"--no-index"',
-        "if names != expected:",
-        "if set(rows) != expected:",
+        'read_regular_bytes(wheel, "wheel")',
+        "if len(names) != len(set(names)):",
+        "if set(names) != expected:",
+        "if len(row_names) != len(set(row_names)):",
+        "if set(row_names) != expected:",
+        "wheel metadata field mismatch",
+        "wheel README payload differs from reviewed source",
         "publish_bytes(",
     ):
         if fragment not in package_builder:
