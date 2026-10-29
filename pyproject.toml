@@ -1,0 +1,55 @@
+[build-system]
+requires = ["hatchling==1.32.3"]
+build-backend = "hatchling.build"
+
+[project]
+name = "source-read"
+version = "0.1.0"
+description = "Keep unreadable sources from being mistaken for clean results."
+readme = "README.md"
+requires-python = ">=3.11"
+license = "MIT"
+license-files = ["LICENSE"]
+authors = [{ name = "Nymrel" }]
+keywords = ["validation", "truthfulness", "tri-state", "source-read"]
+classifiers = [
+  "Development Status :: 3 - Alpha",
+  "License :: OSI Approved :: MIT License",
+  "Intended Audience :: Developers",
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3 :: Only",
+  "Programming Language :: Python :: 3.11",
+  "Programming Language :: Python :: 3.12",
+  "Programming Language :: Python :: 3.13",
+  "Programming Language :: Python :: 3.14",
+  "Topic :: Software Development :: Quality Assurance",
+]
+dependencies = []
+
+[project.urls]
+Homepage = "https://github.com/nymrel/source-read"
+Source = "https://github.com/nymrel/source-read"
+Issues = "https://github.com/nymrel/source-read/issues"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/source_read"]
+
+[tool.hatch.build.targets.sdist]
+include = [
+  "/.gitattributes",
+  "/.gitignore",
+  "/.github/CODEOWNERS",
+  "/.github/workflows/ci.yml",
+  "/PROVENANCE.md",
+  "/README.md",
+  "/RELEASING.md",
+  "/CONTRIBUTING.md",
+  "/LICENSE",
+  "/MAINTAINERS.md",
+  "/SECURITY.md",
+  "/THREAT_MODEL.md",
+  "/pyproject.toml",
+  "/scripts",
+  "/src",
+  "/tests",
+]
