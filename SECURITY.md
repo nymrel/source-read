@@ -28,6 +28,19 @@ The package cannot detect when a caller:
 - chooses an inappropriate computed verdict; or
 - uses `allow_empty=True` without a valid policy basis.
 
+## Release tooling
+
+The source-release verifier rejects links and other non-regular public-tree
+entries, and it requires a supplied ZIP to match the canonical deterministic
+build byte for byte. These controls prevent allowlisted paths from following
+excluded files and prevent unreferenced bytes from hiding outside validated ZIP
+entries.
+
+Passing the verifier does not prove that Git history is clean, that every
+printable secret pattern is absent, or that hosted repository protections are
+enabled. The release process separately reviews the complete public tree,
+immutable digest, public commit history, provider checks, and tag.
+
 ## Data handling
 
 The package never logs or renders a stored `value`. Dataclass representations

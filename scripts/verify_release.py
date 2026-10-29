@@ -5,11 +5,14 @@ from __future__ import annotations
 import argparse
 import ast
 import hashlib
+import io
+import os
 import re
+import stat
 import sys
 import tomllib
 import zipfile
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 
 PUBLIC_FILES = (
     ".gitattributes",
@@ -53,16 +56,75 @@ def _files_under(root: Path) -> set[str]:
     files: set[str] = set()
     for path in root.rglob("*"):
         relative = path.relative_to(root)
-        if not path.is_file() or any(part in IGNORED_PARTS for part in relative.parts):
+        if any(part in IGNORED_PARTS for part in relative.parts):
             continue
+        source_stat = path.lstat()
+        if stat.S_ISLNK(source_stat.st_mode) or _is_windows_reparse_point(source_stat):
+            raise VerificationError(f"tree contains a link: {relative.as_posix()}")
+        if stat.S_ISDIR(source_stat.st_mode):
+            continue
+        if not stat.S_ISREG(source_stat.st_mode):
+            raise VerificationError(
+                f"tree contains a non-regular file: {relative.as_posix()}"
+            )
         if path.suffix == ".pyc":
             continue
         files.add(relative.as_posix())
     return files
 
 
-def _check_imports(path: Path) -> None:
-    tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+def _is_windows_reparse_point(source_stat: os.stat_result) -> bool:
+    reparse_flag = getattr(stat, "FILE_ATTRIBUTE_REPARSE_POINT", 0)
+    attributes = getattr(source_stat, "st_file_attributes", 0)
+    return bool(reparse_flag and attributes & reparse_flag)
+
+
+def _public_path(root: Path, relative: str) -> tuple[Path, os.stat_result]:
+    public_path = PurePosixPath(relative)
+    if public_path.is_absolute() or ".." in public_path.parts:
+        raise VerificationError(f"invalid public path: {relative}")
+
+    current = root
+    final_stat: os.stat_result | None = None
+    for index, part in enumerate(public_path.parts):
+        current /= part
+        source_stat = current.lstat()
+        if stat.S_ISLNK(source_stat.st_mode) or _is_windows_reparse_point(source_stat):
+            raise VerificationError(f"public path contains a link: {relative}")
+        if index < len(public_path.parts) - 1:
+            if not stat.S_ISDIR(source_stat.st_mode):
+                raise VerificationError(f"public path parent is not a directory: {relative}")
+        elif not stat.S_ISREG(source_stat.st_mode):
+            raise VerificationError(f"public path is not a regular file: {relative}")
+        final_stat = source_stat
+
+    if final_stat is None:
+        raise VerificationError(f"invalid public path: {relative}")
+    return current, final_stat
+
+
+def read_public_bytes(root: Path, relative: str) -> bytes:
+    path, expected_stat = _public_path(root, relative)
+    flags = os.O_RDONLY | getattr(os, "O_BINARY", 0) | getattr(os, "O_NOFOLLOW", 0)
+    descriptor = os.open(path, flags)
+    with os.fdopen(descriptor, "rb") as source:
+        opened_stat = os.fstat(source.fileno())
+        if not stat.S_ISREG(opened_stat.st_mode):
+            raise VerificationError(f"public path is not a regular file: {relative}")
+        if (opened_stat.st_dev, opened_stat.st_ino) != (
+            expected_stat.st_dev,
+            expected_stat.st_ino,
+        ):
+            raise VerificationError(f"public path changed while reading: {relative}")
+        return source.read()
+
+
+def _read_public_text(root: Path, relative: str) -> str:
+    return read_public_bytes(root, relative).decode("utf-8")
+
+
+def _check_imports(source: str, filename: str) -> None:
+    tree = ast.parse(source, filename=filename)
     imported: set[str] = set()
     for node in ast.walk(tree):
         if isinstance(node, ast.Import):
@@ -84,18 +146,18 @@ def verify_tree(root: Path) -> None:
             f"tree allowlist mismatch; missing={sorted(public - actual)} "
             f"extra={sorted(actual - (public | local))}"
         )
-    license_digest = hashlib.sha256((root / "LICENSE").read_bytes()).hexdigest()
+    license_digest = hashlib.sha256(read_public_bytes(root, "LICENSE")).hexdigest()
     if license_digest != LICENSE_SHA256:
         raise VerificationError("LICENSE differs from the reviewed Nymrel MIT notice")
 
     public_text = "\n".join(
-        (root / relative).read_text(encoding="utf-8") for relative in PUBLIC_FILES
+        _read_public_text(root, relative) for relative in PUBLIC_FILES
     )
     for pattern in FORBIDDEN_PUBLIC_PATTERNS:
         if pattern.search(public_text):
             raise VerificationError(f"private marker in public file: {pattern.pattern}")
 
-    metadata = tomllib.loads((root / "pyproject.toml").read_text(encoding="utf-8"))
+    metadata = tomllib.loads(_read_public_text(root, "pyproject.toml"))
     if metadata.get("build-system") != {
         "requires": ["hatchling==1.32.3"],
         "build-backend": "hatchling.build",
@@ -146,21 +208,24 @@ def verify_tree(root: Path) -> None:
     ]:
         raise VerificationError("unexpected source-distribution allowlist")
 
-    init_text = (root / "src/source_read/__init__.py").read_text(encoding="utf-8")
+    init_text = _read_public_text(root, "src/source_read/__init__.py")
     if '__version__ = "0.1.0"' not in init_text:
         raise VerificationError("runtime and metadata versions differ")
-    _check_imports(root / "src/source_read/core.py")
+    _check_imports(
+        _read_public_text(root, "src/source_read/core.py"),
+        "src/source_read/core.py",
+    )
 
-    if (root / ".github/CODEOWNERS").read_text(encoding="utf-8") != "* @JalenBuildsHub\n":
+    if _read_public_text(root, ".github/CODEOWNERS") != "* @JalenBuildsHub\n":
         raise VerificationError("unexpected CODEOWNERS")
-    if (root / ".gitattributes").read_text(encoding="utf-8") != "* text=auto eol=lf\n":
+    if _read_public_text(root, ".gitattributes") != "* text=auto eol=lf\n":
         raise VerificationError("unexpected line-ending policy")
-    if (root / ".gitignore").read_text(encoding="utf-8") != (
+    if _read_public_text(root, ".gitignore") != (
         "__pycache__/\n*.py[cod]\ndist/\nbuild/\n.venv/\n*.egg-info/\n"
     ):
         raise VerificationError("unexpected public ignore policy")
 
-    workflow = (root / ".github/workflows/ci.yml").read_text(encoding="utf-8")
+    workflow = _read_public_text(root, ".github/workflows/ci.yml")
     required_workflow_fragments = (
         "permissions:\n  contents: read",
         "persist-credentials: false",
@@ -180,6 +245,31 @@ def verify_tree(root: Path) -> None:
     ):
         if forbidden in workflow.casefold():
             raise VerificationError(f"publication capability in source CI: {forbidden}")
+
+
+def canonical_archive_bytes(root: Path) -> bytes:
+    root = root.resolve()
+    output = io.BytesIO()
+    with zipfile.ZipFile(
+        output,
+        "w",
+        compression=zipfile.ZIP_DEFLATED,
+        compresslevel=9,
+    ) as bundle:
+        for relative in PUBLIC_FILES:
+            info = zipfile.ZipInfo(
+                filename=f"{ARCHIVE_PREFIX}/{relative}",
+                date_time=(1980, 1, 1, 0, 0, 0),
+            )
+            info.compress_type = zipfile.ZIP_DEFLATED
+            info.create_system = 3
+            info.external_attr = 0o100644 << 16
+            bundle.writestr(
+                info,
+                read_public_bytes(root, relative),
+                compresslevel=9,
+            )
+    return output.getvalue()
 
 
 def verify_archive(root: Path, archive: Path) -> None:
@@ -209,10 +299,12 @@ def verify_archive(root: Path, archive: Path) -> None:
             if info.extra or info.comment:
                 raise VerificationError(f"archive entry has unreviewed metadata: {info.filename}")
             relative = info.filename.removeprefix(f"{ARCHIVE_PREFIX}/")
-            if bundle.read(info) != (root / relative).read_bytes():
+            if bundle.read(info) != read_public_bytes(root, relative):
                 raise VerificationError(f"archive content mismatch: {relative}")
         if bundle.comment:
             raise VerificationError("archive has an unreviewed comment")
+    if archive.read_bytes() != canonical_archive_bytes(root):
+        raise VerificationError("archive bytes differ from the canonical deterministic build")
 
 
 def main(argv: list[str] | None = None) -> int:

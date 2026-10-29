@@ -5,25 +5,15 @@ from __future__ import annotations
 import argparse
 import hashlib
 import tempfile
-import zipfile
 from pathlib import Path
 
-from verify_release import ARCHIVE_PREFIX, PUBLIC_FILES, verify_archive, verify_tree
+from verify_release import canonical_archive_bytes, verify_archive, verify_tree
 
 
 def build(root: Path, output: Path) -> str:
     verify_tree(root)
     output.parent.mkdir(parents=True, exist_ok=True)
-    with zipfile.ZipFile(output, "w", compression=zipfile.ZIP_DEFLATED, compresslevel=9) as bundle:
-        for relative in PUBLIC_FILES:
-            info = zipfile.ZipInfo(
-                filename=f"{ARCHIVE_PREFIX}/{relative}",
-                date_time=(1980, 1, 1, 0, 0, 0),
-            )
-            info.compress_type = zipfile.ZIP_DEFLATED
-            info.create_system = 3
-            info.external_attr = 0o100644 << 16
-            bundle.writestr(info, (root / relative).read_bytes(), compresslevel=9)
+    output.write_bytes(canonical_archive_bytes(root))
     verify_archive(root, output)
     return hashlib.sha256(output.read_bytes()).hexdigest()
 

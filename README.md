@@ -16,10 +16,16 @@ services, authenticate callers, validate source integrity, or enforce a policy.
 ## API
 
 ```python
-from source_read import EXIT_UNKNOWN, SourceRead, assess_sources
+from source_read import EXIT_UNKNOWN, UNKNOWN, SourceRead, assess_sources
 
-read = SourceRead.ok([], label="synthetic inventory")
-assessment = assess_sources([read], "CLEAR")
+readable_empty = SourceRead.ok([], label="synthetic inventory")
+assert assess_sources([readable_empty], "CLEAR").effective_verdict == "CLEAR"
+
+unreadable = SourceRead.unreadable(
+    "synthetic inventory", "synthetic source unavailable", empty=[]
+)
+assessment = assess_sources([unreadable], "CLEAR")
+assert assessment.effective_verdict == UNKNOWN
 
 if assessment.exit_code == EXIT_UNKNOWN:
     raise SystemExit(EXIT_UNKNOWN)
