@@ -14,6 +14,7 @@ from source_read import (  # noqa: E402
     UNKNOWN,
     SourceAssessment,
     SourceRead,
+    assess_check,
     assess_sources,
 )
 
@@ -44,6 +45,57 @@ class SourceReadTests(unittest.TestCase):
 
         self.assertEqual(assessment.effective_verdict, "FAILED")
         self.assertEqual(assessment.exit_code, EXIT_FAIL)
+        self.assertFalse(assessment.is_pass)
+        self.assertTrue(assessment.is_fail)
+        self.assertFalse(assessment.is_unknown)
+
+    def test_low_level_verdict_text_does_not_infer_exit_code(self) -> None:
+        assessment = assess_sources([SourceRead.ok([], "inventory")], "FAIL")
+
+        self.assertEqual(assessment.effective_verdict, "FAIL")
+        self.assertEqual(assessment.exit_code, EXIT_PASS)
+        self.assertTrue(assessment.is_pass)
+        self.assertEqual(assessment.problems, ())
+
+    def test_assess_check_couples_boolean_outcome_to_exit_code(self) -> None:
+        passing = assess_check([SourceRead.ok([], "inventory")], passed=True)
+        failing = assess_check(
+            [SourceRead.ok([1], "inventory")],
+            passed=False,
+            verdict="POLICY_FAILED",
+        )
+
+        self.assertEqual(passing.effective_verdict, "PASS")
+        self.assertEqual(passing.exit_code, EXIT_PASS)
+        self.assertTrue(passing.is_pass)
+        self.assertEqual(failing.effective_verdict, "POLICY_FAILED")
+        self.assertEqual(failing.exit_code, EXIT_FAIL)
+        self.assertTrue(failing.is_fail)
+        self.assertEqual(failing.problems, ())
+
+    def test_assess_check_unknown_overrides_known_failure(self) -> None:
+        assessment = assess_check(
+            [SourceRead.unreadable("inventory", "offline")],
+            passed=False,
+        )
+
+        self.assertEqual(assessment.requested_verdict, "FAIL")
+        self.assertEqual(assessment.requested_exit_code, EXIT_FAIL)
+        self.assertEqual(assessment.effective_verdict, UNKNOWN)
+        self.assertEqual(assessment.exit_code, EXIT_UNKNOWN)
+        self.assertTrue(assessment.is_unknown)
+
+    def test_assess_check_requires_a_real_boolean(self) -> None:
+        with self.assertRaisesRegex(TypeError, "passed must be a bool"):
+            assess_check([], passed=1)  # type: ignore[arg-type]
+
+    def test_assess_check_preserves_empty_input_policy(self) -> None:
+        unknown = assess_check([], passed=True)
+        allowed_failure = assess_check([], passed=False, allow_empty=True)
+
+        self.assertTrue(unknown.is_unknown)
+        self.assertTrue(allowed_failure.is_fail)
+        self.assertEqual(allowed_failure.effective_verdict, "FAIL")
 
     def test_mixed_reads_force_unknown_in_either_order(self) -> None:
         good = SourceRead.ok([1], "good")

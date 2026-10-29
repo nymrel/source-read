@@ -4,18 +4,189 @@ from __future__ import annotations
 
 import argparse
 import hashlib
+import os
+import stat
 import tempfile
+from collections.abc import Callable
 from pathlib import Path
 
-from verify_release import canonical_archive_bytes, verify_archive, verify_tree
+from verify_release import (
+    ARCHIVE_PREFIX,
+    PUBLIC_FILES,
+    VerificationError,
+    _is_windows_reparse_point,
+    canonical_archive_bytes,
+    is_ignored_part,
+    verify_archive,
+    verify_tree,
+)
+
+
+def _absolute(path: Path) -> Path:
+    """Normalize ``.`` and ``..`` without following filesystem links."""
+
+    return Path(os.path.abspath(path))
+
+
+def _ensure_unlinked_directory(path: Path) -> Path:
+    """Create and validate an ordinary output-directory chain."""
+
+    absolute = _absolute(path)
+    current = Path(absolute.anchor)
+    for part in absolute.parts[1:]:
+        current /= part
+        try:
+            source_stat = current.lstat()
+        except FileNotFoundError:
+            current.mkdir()
+            source_stat = current.lstat()
+        if stat.S_ISLNK(source_stat.st_mode) or _is_windows_reparse_point(source_stat):
+            raise VerificationError(f"output directory contains a link: {current}")
+        if not stat.S_ISDIR(source_stat.st_mode):
+            raise VerificationError(f"output parent is not a directory: {current}")
+    return absolute
+
+
+def _validate_existing_output(root: Path, output: Path) -> None:
+    try:
+        output_stat = output.lstat()
+    except FileNotFoundError:
+        return
+    if stat.S_ISLNK(output_stat.st_mode) or _is_windows_reparse_point(output_stat):
+        raise VerificationError("output path is a link")
+    if not stat.S_ISREG(output_stat.st_mode):
+        raise VerificationError("output path is not a regular file")
+    if output_stat.st_nlink != 1:
+        raise VerificationError("output path is hardlinked")
+    output_identity = (output_stat.st_dev, output_stat.st_ino)
+    for relative in PUBLIC_FILES:
+        source_stat = (root / relative).lstat()
+        if output_identity == (source_stat.st_dev, source_stat.st_ino):
+            raise VerificationError("output path aliases a reviewed source file")
+
+
+def _source_directory_identities(root: Path) -> dict[tuple[int, int], set[Path]]:
+    """Map source-tree directory identities without traversing ignored data."""
+
+    identities: dict[tuple[int, int], set[Path]] = {}
+
+    def record(path: Path) -> None:
+        source_stat = path.lstat()
+        if stat.S_ISDIR(source_stat.st_mode):
+            identity = (source_stat.st_dev, source_stat.st_ino)
+            identities.setdefault(identity, set()).add(path.relative_to(root))
+
+    record(root)
+    for current_text, directory_names, _file_names in os.walk(
+        root, topdown=True, followlinks=False
+    ):
+        current = Path(current_text)
+        kept: list[str] = []
+        for name in directory_names:
+            path = current / name
+            record(path)
+            if not is_ignored_part(name):
+                kept.append(name)
+        directory_names[:] = kept
+    return identities
+
+
+def _under_dist(relative: Path) -> bool:
+    return bool(relative.parts) and relative.parts[0].casefold() == "dist"
+
+
+def _normalize_internal_output(root: Path, output: Path) -> Path:
+    """Use the canonical ``dist`` spelling for a lexical in-tree output."""
+
+    try:
+        relative = output.relative_to(root)
+    except ValueError:
+        return output
+    if _under_dist(relative):
+        return root / "dist" / Path(*relative.parts[1:])
+    return output
+
+
+def _validate_output_location(root: Path, output: Path) -> None:
+    """Protect source directories even through filesystem path aliases."""
+
+    try:
+        relative = output.relative_to(root)
+    except ValueError:
+        relative = None
+    if relative is not None and not _under_dist(relative):
+        raise VerificationError("output inside the source tree must be under dist/")
+
+    source_directories = _source_directory_identities(root)
+    current = output.parent
+    suffix: list[str] = [output.name]
+    while True:
+        try:
+            current_stat = current.lstat()
+        except FileNotFoundError:
+            pass
+        else:
+            identity = (current_stat.st_dev, current_stat.st_ino)
+            for source_relative in source_directories.get(identity, set()):
+                aliased = source_relative.joinpath(*suffix)
+                if not _under_dist(aliased):
+                    raise VerificationError(
+                        "output aliases the source tree outside dist/"
+                    )
+        suffix.insert(0, current.name)
+        parent = current.parent
+        if parent == current:
+            break
+        current = parent
+
+
+def publish_bytes(
+    root: Path,
+    output: Path,
+    payload: bytes,
+    verifier: Callable[[Path], None],
+) -> Path:
+    """Safely publish already-generated bytes after staged verification."""
+
+    root = root.resolve()
+    output = _normalize_internal_output(root, _absolute(output))
+    _validate_output_location(root, output)
+    _ensure_unlinked_directory(output.parent)
+    _validate_existing_output(root, output)
+
+    descriptor, temporary_name = tempfile.mkstemp(
+        prefix=f".{output.name}.",
+        suffix=".tmp",
+        dir=output.parent,
+    )
+    staged = Path(temporary_name)
+    try:
+        with os.fdopen(descriptor, "wb") as destination:
+            destination.write(payload)
+            destination.flush()
+            os.fsync(destination.fileno())
+        os.chmod(staged, 0o644)
+        verifier(staged)
+        os.replace(staged, output)
+        staged = None
+        verifier(output)
+    finally:
+        if staged is not None:
+            staged.unlink(missing_ok=True)
+    return output
 
 
 def build(root: Path, output: Path) -> str:
+    root = root.resolve()
     verify_tree(root)
-    output.parent.mkdir(parents=True, exist_ok=True)
-    output.write_bytes(canonical_archive_bytes(root))
-    verify_archive(root, output)
-    return hashlib.sha256(output.read_bytes()).hexdigest()
+    archive_bytes = canonical_archive_bytes(root)
+    publish_bytes(
+        root,
+        output,
+        archive_bytes,
+        lambda archive: verify_archive(root, archive),
+    )
+    return hashlib.sha256(archive_bytes).hexdigest()
 
 
 def main() -> int:
@@ -23,12 +194,13 @@ def main() -> int:
     parser.add_argument(
         "--output",
         type=Path,
-        default=Path("dist/source-read-0.1.0.zip"),
+        default=Path(f"dist/{ARCHIVE_PREFIX}.zip"),
     )
     parser.add_argument("--check-reproducible", action="store_true")
     args = parser.parse_args()
     root = Path(__file__).resolve().parents[1]
     output = args.output if args.output.is_absolute() else root / args.output
+    output = _normalize_internal_output(root, _absolute(output))
     digest = build(root, output)
 
     if args.check_reproducible:

@@ -7,10 +7,11 @@ from .core import (
     UNKNOWN,
     SourceAssessment,
     SourceRead,
+    assess_check,
     assess_sources,
 )
 
-__version__ = "0.1.0"
+__version__ = "0.2.0"
 
 __all__ = [
     "EXIT_FAIL",
@@ -19,5 +20,6 @@ __all__ = [
     "UNKNOWN",
     "SourceAssessment",
     "SourceRead",
+    "assess_check",
     "assess_sources",
 ]

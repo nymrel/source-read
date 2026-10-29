@@ -203,6 +203,24 @@ class SourceAssessment:
             for index in self.unreadable_indexes
         )
 
+    @property
+    def is_pass(self) -> bool:
+        """Return whether the effective machine outcome is a pass."""
+
+        return self.exit_code == EXIT_PASS
+
+    @property
+    def is_fail(self) -> bool:
+        """Return whether the effective machine outcome is a known failure."""
+
+        return self.exit_code == EXIT_FAIL
+
+    @property
+    def is_unknown(self) -> bool:
+        """Return whether unreadable or absent sources forced ``UNKNOWN``."""
+
+        return self.exit_code == EXIT_UNKNOWN
+
 
 def assess_sources(
     reads: Iterable[SourceRead[Any]],
@@ -212,6 +230,11 @@ def assess_sources(
     allow_empty: bool = False,
 ) -> SourceAssessment:
     """Assess ``reads`` exactly once and return a stable result.
+
+    ``verdict`` is opaque display text.  ``verdict_exit_code`` is the separate
+    machine outcome and defaults to :data:`EXIT_PASS`; failure-looking text is
+    never interpreted.  Use :func:`assess_check` when a required boolean
+    outcome is safer than supplying those two values independently.
 
     A zero-source input is unknown by default.  ``allow_empty=True`` is an
     explicit policy decision that permits the caller's verdict to pass through.
@@ -257,4 +280,33 @@ def assess_sources(
         allow_empty=allow_empty,
         empty_input=empty_input,
         unknown_applied=unknown_applied,
+    )
+
+
+def assess_check(
+    reads: Iterable[SourceRead[Any]],
+    *,
+    passed: bool,
+    verdict: str | None = None,
+    allow_empty: bool = False,
+) -> SourceAssessment:
+    """Assess a boolean check while deriving its known exit code.
+
+    ``passed`` is required and must be a real :class:`bool`.  It selects exit
+    code ``0`` or ``1`` and supplies default display text ``PASS`` or ``FAIL``.
+    A custom ``verdict`` remains opaque caller text.  Unreadable or absent
+    sources still override either known outcome with ``UNKNOWN`` and exit code
+    ``2``.
+    """
+
+    if not isinstance(passed, bool):
+        raise TypeError("passed must be a bool")
+    requested_verdict = verdict
+    if requested_verdict is None:
+        requested_verdict = "PASS" if passed else "FAIL"
+    return assess_sources(
+        reads,
+        requested_verdict,
+        verdict_exit_code=EXIT_PASS if passed else EXIT_FAIL,
+        allow_empty=allow_empty,
     )

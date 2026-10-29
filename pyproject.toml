@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "source-read"
-version = "0.1.0"
+version = "0.2.0"
 description = "Keep unreadable sources from being mistaken for clean results."
 readme = "README.md"
 requires-python = ">=3.11"
@@ -46,6 +46,7 @@ include = [
   "/CONTRIBUTING.md",
   "/LICENSE",
   "/MAINTAINERS.md",
+  "/requirements",
   "/SECURITY.md",
   "/THREAT_MODEL.md",
   "/pyproject.toml",
