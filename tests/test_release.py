@@ -127,6 +127,23 @@ class ReleaseVerifierTests(unittest.TestCase):
             ):
                 verify_release.verify_tree(public_root)
 
+    def test_missing_install_smoke_step_is_rejected(self) -> None:
+        with tempfile.TemporaryDirectory(dir=ROOT / "dist") as temporary:
+            public_root = Path(temporary) / "source"
+            self._public_tree(public_root)
+            workflow_path = public_root / ".github" / "workflows" / "ci.yml"
+            workflow_path.write_bytes(
+                workflow_path.read_bytes().replace(
+                    b"          python -m pip install .\n", b""
+                )
+            )
+
+            with self.assertRaisesRegex(
+                verify_release.VerificationError,
+                r"workflow requirement missing: python -m pip install \.",
+            ):
+                verify_release.verify_tree(public_root)
+
     def test_duplicate_archive_entry_is_rejected(self) -> None:
         with tempfile.TemporaryDirectory(dir=ROOT / "dist") as temporary:
             archive = Path(temporary) / "duplicate.zip"

@@ -231,6 +231,8 @@ def verify_tree(root: Path) -> None:
         "persist-credentials: false",
         "actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1",
         "actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97",
+        "python -m pip install .",
+        'python -I -c "import source_read; assert source_read.__version__ == \'0.1.0\'"',
     )
     for fragment in required_workflow_fragments:
         if fragment not in workflow:
