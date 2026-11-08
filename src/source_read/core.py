@@ -203,6 +203,32 @@ class SourceAssessment:
             for index in self.unreadable_indexes
         )
 
+    def to_report(self) -> dict[str, object]:
+        """Project machine outcome and coverage facts without caller content.
+
+        The fresh JSON-ready mapping omits values, labels, reasons, problems,
+        and caller verdict text. Counts and outcomes can still be sensitive;
+        this projection does not authenticate a report or prove a source read.
+        """
+
+        # Known-outcome codes may be int subclasses under the existing API.
+        # Project fixed builtins rather than retaining caller-defined objects.
+        code, outcome = {
+            EXIT_PASS: (EXIT_PASS, "PASS"),
+            EXIT_FAIL: (EXIT_FAIL, "FAIL"),
+            EXIT_UNKNOWN: (EXIT_UNKNOWN, UNKNOWN),
+        }[self.exit_code]
+        return {
+            "schema": "source-read.assessment.v1",
+            "outcome": outcome,
+            "exit_code": code,
+            "source_count": len(self.reads),
+            "unreadable_indexes": list(self.unreadable_indexes),
+            "empty_input": self.empty_input,
+            "allow_empty": self.allow_empty,
+            "unknown_applied": self.unknown_applied,
+        }
+
     @property
     def is_pass(self) -> bool:
         """Return whether the effective machine outcome is a pass."""

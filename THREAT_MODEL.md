@@ -38,6 +38,7 @@ attestation, and tag creation remain separate maintainer-controlled boundaries.
 | A caller constructs a contradictory assessment | Assessment objects have no public constructor and are produced in one place. |
 | Diagnostics disclose source contents | Values, labels, and reasons are hidden from default representations; generic problems omit details. |
 | Caller-controlled verdict text injects default representations | Verdict strings are hidden from the default assessment representation. |
+| A machine-report integration accidentally serializes caller payloads or diagnostics | `to_report()` projects only fixed schema text, machine outcomes and coverage primitives; it never serializes the stored caller content. |
 | Detailed text injects control or invisible format characters into logs | Control/format and Unicode line/paragraph separator characters are rendered as visible escapes. |
 | An unreadable source preserves a success exit code | Unknown assessments force exit `2`. |
 | A known outcome uses the reserved unknown exit code | Requested known-outcome codes are restricted to pass `0` or failure `1`. |
@@ -62,6 +63,10 @@ attestation, and tag creation remain separate maintainer-controlled boundaries.
   omitted. A caller needing that guarantee must compare against an expected
   source set before assessment.
 - Stored `value`, `label`, and `reason` attributes remain accessible to code.
+- Content-free machine reports still reveal outcomes, counts, source positions,
+  and policy flags. They may be sensitive and do not authenticate the sender or
+  prove source acquisition, completeness, freshness, or integrity. The package
+  does not parse or validate reports received from another process.
 - Explicit detailed diagnostics can disclose sensitive printable text even
   though control characters are escaped.
 - Infinite or attacker-controlled iterables can exhaust resources.

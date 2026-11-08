@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import sys
 import unittest
 from pathlib import Path, PurePosixPath
@@ -20,6 +21,110 @@ from source_read import (  # noqa: E402
 
 
 class SourceReadTests(unittest.TestCase):
+    def test_machine_report_has_a_content_free_json_contract(self) -> None:
+        assessment = assess_check([SourceRead.ok([])], passed=True)
+        report = assessment.to_report()
+
+        self.assertEqual(
+            report,
+            {
+                "schema": "source-read.assessment.v1",
+                "outcome": "PASS",
+                "exit_code": 0,
+                "source_count": 1,
+                "unreadable_indexes": [],
+                "empty_input": False,
+                "allow_empty": False,
+                "unknown_applied": False,
+            },
+        )
+        self.assertEqual(json.loads(json.dumps(report)), report)
+
+    def test_machine_report_uses_exit_code_not_caller_verdict(self) -> None:
+        reads = [SourceRead.ok([])]
+        passing = assess_sources(reads, "FAIL", verdict_exit_code=EXIT_PASS)
+        failing = assess_sources(reads, "PASS", verdict_exit_code=EXIT_FAIL)
+
+        self.assertEqual(passing.to_report()["outcome"], "PASS")
+        self.assertEqual(failing.to_report()["outcome"], "FAIL")
+        self.assertEqual(failing.to_report()["exit_code"], EXIT_FAIL)
+
+    def test_machine_report_never_serializes_caller_content(self) -> None:
+        sentinel = "synthetic-private-sentinel\n\x1b[31m\u202e"
+
+        class PrivateValue:
+            def __repr__(self) -> str:
+                raise AssertionError("caller payload must not be represented")
+
+        assessment = assess_sources(
+            [
+                SourceRead.ok(PrivateValue(), sentinel + "-label"),
+                SourceRead.unreadable(
+                    sentinel + "-path", sentinel + "-reason", empty=PrivateValue()
+                ),
+            ],
+            sentinel + "-verdict",
+            verdict_exit_code=EXIT_FAIL,
+        )
+        report = assessment.to_report()
+        encoded = json.dumps(report, ensure_ascii=False)
+
+        self.assertEqual(report["outcome"], "UNKNOWN")
+        self.assertEqual(report["exit_code"], EXIT_UNKNOWN)
+        self.assertEqual(report["source_count"], 2)
+        self.assertEqual(report["unreadable_indexes"], [1])
+        self.assertNotIn("synthetic-private-sentinel", encoded)
+        self.assertNotIn("\x1b", encoded)
+        self.assertNotIn("\u202e", encoded)
+        self.assertNotIn("problems", report)
+        self.assertNotIn("requested_verdict", report)
+        self.assertNotIn("effective_verdict", report)
+
+    def test_machine_report_exposes_empty_source_policy_without_content(self) -> None:
+        unknown = assess_check([], passed=True).to_report()
+        allowed = assess_check([], passed=True, allow_empty=True).to_report()
+
+        self.assertEqual(unknown["outcome"], "UNKNOWN")
+        self.assertEqual(unknown["source_count"], 0)
+        self.assertTrue(unknown["empty_input"])
+        self.assertTrue(unknown["unknown_applied"])
+        self.assertEqual(allowed["outcome"], "PASS")
+        self.assertTrue(allowed["allow_empty"])
+        self.assertFalse(allowed["unknown_applied"])
+
+    def test_machine_report_is_a_detached_projection(self) -> None:
+        assessment = assess_check(
+            [SourceRead.unreadable("synthetic", "unavailable")], passed=True
+        )
+        report = assessment.to_report()
+        indexes = report["unreadable_indexes"]
+        self.assertIsInstance(indexes, list)
+        indexes.append(99)
+        report["outcome"] = "PASS"
+
+        self.assertEqual(assessment.unreadable_indexes, (0,))
+        self.assertEqual(assessment.exit_code, EXIT_UNKNOWN)
+        self.assertEqual(assessment.to_report()["unreadable_indexes"], [0])
+        self.assertEqual(assessment.to_report()["outcome"], "UNKNOWN")
+
+    def test_machine_report_normalizes_existing_int_subclass_codes(self) -> None:
+        class PrivateCode(int):
+            def __repr__(self) -> str:
+                return "synthetic-private-code-sentinel"
+
+            def __int__(self) -> int:
+                raise AssertionError("projection must not invoke caller conversion")
+
+        assessment = assess_sources(
+            [SourceRead.ok([])], "opaque", verdict_exit_code=PrivateCode(1)
+        )
+        report = assessment.to_report()
+        self.assertIs(type(report["exit_code"]), int)
+        self.assertEqual(report["exit_code"], EXIT_FAIL)
+        self.assertEqual(report["outcome"], "FAIL")
+        self.assertNotIn("synthetic-private-code-sentinel", repr(report))
+        self.assertNotIn("synthetic-private-code-sentinel", json.dumps(report))
+
     def test_unreadable_source_forces_unknown(self) -> None:
         read = SourceRead.unreadable("inventory", "not available", empty=[])
         assessment = assess_sources([read], "CLEAR")

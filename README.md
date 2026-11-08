@@ -146,6 +146,8 @@ raise SystemExit(assessment.exit_code)  # exits 1
 - `SourceAssessment` exposes immutable source membership, generic `problems`,
   unreadable indexes, requested/effective verdicts and codes, empty-input
   state, `unknown_applied`, and `is_pass` / `is_fail` / `is_unknown`.
+- In this unreleased source candidate, `SourceAssessment.to_report()` exports
+  a content-free machine report as described below.
 - `detailed_problems()` explicitly reveals escaped labels and reasons.
 - `EXIT_PASS`, `EXIT_FAIL`, and `EXIT_UNKNOWN` are `0`, `1`, and `2`;
   `UNKNOWN` is the reserved unknown-verdict text.
@@ -167,6 +169,95 @@ copied or frozen. Default representations and generic problem summaries hide
 values, labels, reasons, and caller verdict text. `describe(include_details=True)`
 and `detailed_problems()` are explicit disclosure operations; sanitize their
 output before logging or sharing it.
+
+## Unreleased integration: machine reports
+
+`SourceAssessment.to_report()` is an additive API in this source candidate. It
+is **not included in the published `v0.2.0` tag or source archive**. The current
+package version is retained during preparation; a future release needs its own
+reviewed version and immutable artifacts. Install the candidate's exact source
+or locally verified wheel to evaluate this feature, not the older release.
+
+Use the report between a reader and a CI check, policy engine, or agent tool
+adapter when those consumers need the machine outcome but not source contents:
+
+```python
+import json
+from source_read import SourceRead, assess_check
+
+# The adapter, not this library, performed and classified the source operation.
+assessment = assess_check([SourceRead.ok([], label="synthetic inventory")], passed=True)
+print(json.dumps(assessment.to_report()))
+raise SystemExit(assessment.exit_code)
+```
+
+The report is a fresh JSON-ready mapping with this exact initial shape:
+
+```json
+{
+  "schema": "source-read.assessment.v1",
+  "outcome": "PASS",
+  "exit_code": 0,
+  "source_count": 1,
+  "unreadable_indexes": [],
+  "empty_input": false,
+  "allow_empty": false,
+  "unknown_applied": false
+}
+```
+
+`outcome` is derived only from the effective machine exit code: `0` means
+`PASS`, `1` means `FAIL`, and `2` means `UNKNOWN`. Arbitrary caller verdict text
+is not interpreted or copied. Source indexes are zero-based positions in the
+materialized input, not source identities. `empty_input` records zero sources;
+`allow_empty` makes an explicit empty-source policy exception visible.
+
+The report omits payloads, labels, reasons, generic/detailed problem text, and
+requested/effective caller verdict text. It never calls payload serialization
+or string conversion. A caller can mutate the returned mapping or index list
+without changing the assessment; a later report is independent of that mutation.
+The schema identifies this projection's initial contract, not a universal agent
+protocol. This API exports reports; it does not parse or validate received JSON.
+
+Content-free does not mean universally safe to share. Counts and outcomes can
+still reveal sensitive facts. Review recipients and logs, and do not treat a
+report as authenticated, tamper-evident, independently observed, fresh, complete,
+or proof of a source read. Those properties require their own integration.
+
+### A reader and a CI consumer
+
+The [HTTP reference adapter](examples/http_check.py) is a standard-library-only
+example for a caller-controlled HTTP(S) JSON inventory. The policy is deliberately
+simple: a full HTTP 200 response containing an empty list passes, an obtained
+nonempty list fails, and HTTP/read/UTF-8/JSON/shape failure becomes unknown.
+Partial HTTP 206 responses are not complete inventories. The adapter uses a
+bounded read and timeout. It is not a crawler, network sandbox, pagination
+implementation, or production SSRF boundary. The caller remains responsible
+for whether a response represents the complete source required by its policy.
+
+Run the example with the Python environment that has the candidate installed:
+
+```text
+python examples/http_check.py --url http://127.0.0.1:8080/inventory
+python examples/http_check.py --no-sources
+```
+
+Each supported run writes only the content-free JSON report to stdout and exits
+with that report's `exit_code`. The second command deliberately returns `2`.
+An empty HTTP body, malformed JSON, or a server outage is not an empty inventory.
+An integration must explicitly classify source acquisition and policy results;
+for example, an MCP tool's domain rejection is not automatically a transport
+failure. No MCP-specific classifier or dependency is added here.
+
+`python scripts/verify_package_build.py` copies the example into a new temporary
+consumer **outside the checkout**, installs the actual verified wheel in a
+separate external runtime, and invokes it using Python `-I`. A synthetic loopback
+server supplies empty, findings, unavailable, malformed, wrong-shape, and partial
+response cases; a seventh case supplies zero sources. The check verifies installed module origin,
+JSON and exit codes, privacy sentinels, wheel identity, and zero runtime
+dependencies. It retains `dist/installed-consumer-acceptance.json`, including the
+exact wheel/core/copied-consumer hashes. This demonstrates installed integration with a reader
+and CI-style machine output, not external-user adoption or a live provider test.
 
 ## Local validation
 

@@ -29,6 +29,7 @@ PUBLIC_FILES = (
     "requirements/build.lock",
     "SECURITY.md",
     "THREAT_MODEL.md",
+    "examples/http_check.py",
     "pyproject.toml",
     "scripts/build_source_archive.py",
     "scripts/verify_package_build.py",
@@ -37,6 +38,7 @@ PUBLIC_FILES = (
     "src/source_read/core.py",
     "tests/__init__.py",
     "tests/test_core.py",
+    "tests/test_consumer.py",
     "tests/test_release.py",
 )
 
@@ -306,6 +308,7 @@ def verify_tree(root: Path) -> None:
         "/requirements",
         "/SECURITY.md",
         "/THREAT_MODEL.md",
+        "/examples",
         "/pyproject.toml",
         "/scripts",
         "/src",
