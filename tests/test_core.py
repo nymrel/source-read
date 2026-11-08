@@ -107,6 +107,24 @@ class SourceReadTests(unittest.TestCase):
         self.assertEqual(assessment.to_report()["unreadable_indexes"], [0])
         self.assertEqual(assessment.to_report()["outcome"], "UNKNOWN")
 
+    def test_machine_report_normalizes_existing_int_subclass_codes(self) -> None:
+        class PrivateCode(int):
+            def __repr__(self) -> str:
+                return "synthetic-private-code-sentinel"
+
+            def __int__(self) -> int:
+                raise AssertionError("projection must not invoke caller conversion")
+
+        assessment = assess_sources(
+            [SourceRead.ok([])], "opaque", verdict_exit_code=PrivateCode(1)
+        )
+        report = assessment.to_report()
+        self.assertIs(type(report["exit_code"]), int)
+        self.assertEqual(report["exit_code"], EXIT_FAIL)
+        self.assertEqual(report["outcome"], "FAIL")
+        self.assertNotIn("synthetic-private-code-sentinel", repr(report))
+        self.assertNotIn("synthetic-private-code-sentinel", json.dumps(report))
+
     def test_unreadable_source_forces_unknown(self) -> None:
         read = SourceRead.unreadable("inventory", "not available", empty=[])
         assessment = assess_sources([read], "CLEAR")

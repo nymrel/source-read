@@ -211,14 +211,17 @@ class SourceAssessment:
         this projection does not authenticate a report or prove a source read.
         """
 
+        # Known-outcome codes may be int subclasses under the existing API.
+        # Project fixed builtins rather than retaining caller-defined objects.
+        code, outcome = {
+            EXIT_PASS: (EXIT_PASS, "PASS"),
+            EXIT_FAIL: (EXIT_FAIL, "FAIL"),
+            EXIT_UNKNOWN: (EXIT_UNKNOWN, UNKNOWN),
+        }[self.exit_code]
         return {
             "schema": "source-read.assessment.v1",
-            "outcome": {
-                EXIT_PASS: "PASS",
-                EXIT_FAIL: "FAIL",
-                EXIT_UNKNOWN: UNKNOWN,
-            }[self.exit_code],
-            "exit_code": self.exit_code,
+            "outcome": outcome,
+            "exit_code": code,
             "source_count": len(self.reads),
             "unreadable_indexes": list(self.unreadable_indexes),
             "empty_input": self.empty_input,
