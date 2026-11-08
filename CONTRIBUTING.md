@@ -26,7 +26,7 @@ Run:
 python -m unittest discover -s tests -v
 python scripts/verify_release.py
 python scripts/build_source_archive.py --check-reproducible
-python scripts/verify_release.py --archive dist/source-read-0.2.0.zip
+python scripts/verify_release.py --archive dist/source-read-0.3.0.zip
 python scripts/verify_package_build.py
 ```
 

@@ -50,7 +50,7 @@ FORBIDDEN_PUBLIC_PATTERNS = (
     re.compile(r"(?i)source (?:blob|commit):\s*[0-9a-f]{40}"),
 )
 STDLIB_IMPORTS = {"__future__", "dataclasses", "pathlib", "typing", "unicodedata"}
-PROJECT_VERSION = "0.2.0"
+PROJECT_VERSION = "0.3.0"
 ARCHIVE_PREFIX = f"source-read-{PROJECT_VERSION}"
 LICENSE_SHA256 = "46ade72a7e17940f952941f334ce77a9ad8305c20c75099680f487f9af3a413c"
 LOCKED_BUILD_REQUIREMENTS = {
@@ -353,7 +353,7 @@ def verify_tree(root: Path) -> None:
         "python scripts/verify_package_build.py",
         "python -m unittest discover -s tests -v",
         "python scripts/build_source_archive.py --check-reproducible",
-        "python scripts/verify_release.py --archive dist/source-read-0.2.0.zip",
+        "python scripts/verify_release.py --archive dist/source-read-0.3.0.zip",
         '- os: ubuntu-latest\n            python-version: "3.11.16"',
         '- os: ubuntu-latest\n            python-version: "3.12.14"',
         '- os: ubuntu-latest\n            python-version: "3.13.15"',

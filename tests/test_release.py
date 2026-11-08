@@ -252,7 +252,7 @@ class ReleaseVerifierTests(unittest.TestCase):
             metadata_path = public_root / "pyproject.toml"
             metadata_path.write_text(
                 metadata_path.read_text(encoding="utf-8").replace(
-                    'version = "0.2.0"', 'version = "9.9.9"'
+                    f'version = "{verify_release.PROJECT_VERSION}"', 'version = "9.9.9"'
                 ),
                 encoding="utf-8",
             )
@@ -752,7 +752,7 @@ class ReleaseVerifierTests(unittest.TestCase):
 
     def test_wheel_verifier_accepts_one_consistent_snapshot(self) -> None:
         with tempfile.TemporaryDirectory(dir=ROOT / "dist") as temporary:
-            wheel = Path(temporary) / "source_read-0.2.0-py3-none-any.whl"
+            wheel = Path(temporary) / f"source_read-{verify_release.PROJECT_VERSION}-py3-none-any.whl"
             self._wheel(wheel)
 
             with mock.patch.object(
@@ -766,7 +766,7 @@ class ReleaseVerifierTests(unittest.TestCase):
 
     def test_wheel_verifier_rejects_duplicate_archive_member(self) -> None:
         with tempfile.TemporaryDirectory(dir=ROOT / "dist") as temporary:
-            wheel = Path(temporary) / "source_read-0.2.0-py3-none-any.whl"
+            wheel = Path(temporary) / f"source_read-{verify_release.PROJECT_VERSION}-py3-none-any.whl"
             self._wheel(wheel, duplicate_member=True)
 
             with self.assertRaisesRegex(RuntimeError, "duplicate entries"):
@@ -774,7 +774,7 @@ class ReleaseVerifierTests(unittest.TestCase):
 
     def test_wheel_verifier_rejects_duplicate_record_row(self) -> None:
         with tempfile.TemporaryDirectory(dir=ROOT / "dist") as temporary:
-            wheel = Path(temporary) / "source_read-0.2.0-py3-none-any.whl"
+            wheel = Path(temporary) / f"source_read-{verify_release.PROJECT_VERSION}-py3-none-any.whl"
             self._wheel(wheel, duplicate_record=True)
 
             with self.assertRaisesRegex(RuntimeError, "duplicate rows"):
@@ -782,7 +782,7 @@ class ReleaseVerifierTests(unittest.TestCase):
 
     def test_wheel_verifier_rejects_metadata_substitution(self) -> None:
         with tempfile.TemporaryDirectory(dir=ROOT / "dist") as temporary:
-            wheel = Path(temporary) / "source_read-0.2.0-py3-none-any.whl"
+            wheel = Path(temporary) / f"source_read-{verify_release.PROJECT_VERSION}-py3-none-any.whl"
             self._wheel(wheel, metadata_name="substituted")
 
             with self.assertRaisesRegex(RuntimeError, "canonical bytes"):
@@ -790,7 +790,7 @@ class ReleaseVerifierTests(unittest.TestCase):
 
     def test_wheel_verifier_rejects_extra_metadata_header(self) -> None:
         with tempfile.TemporaryDirectory(dir=ROOT / "dist") as temporary:
-            wheel = Path(temporary) / "source_read-0.2.0-py3-none-any.whl"
+            wheel = Path(temporary) / f"source_read-{verify_release.PROJECT_VERSION}-py3-none-any.whl"
             self._wheel(wheel, extra_metadata_header="Provides-Extra: injected")
 
             with self.assertRaisesRegex(RuntimeError, "canonical bytes"):
@@ -798,7 +798,7 @@ class ReleaseVerifierTests(unittest.TestCase):
 
     def test_wheel_verifier_rejects_unix_from_metadata_prefix(self) -> None:
         with tempfile.TemporaryDirectory(dir=ROOT / "dist") as temporary:
-            wheel = Path(temporary) / "source_read-0.2.0-py3-none-any.whl"
+            wheel = Path(temporary) / f"source_read-{verify_release.PROJECT_VERSION}-py3-none-any.whl"
             self._wheel(wheel, metadata_prefix="From injected-unreviewed\n")
 
             with self.assertRaisesRegex(RuntimeError, "canonical bytes"):
@@ -806,7 +806,7 @@ class ReleaseVerifierTests(unittest.TestCase):
 
     def test_wheel_verifier_rejects_trailing_bytes(self) -> None:
         with tempfile.TemporaryDirectory(dir=ROOT / "dist") as temporary:
-            wheel = Path(temporary) / "source_read-0.2.0-py3-none-any.whl"
+            wheel = Path(temporary) / f"source_read-{verify_release.PROJECT_VERSION}-py3-none-any.whl"
             self._wheel(wheel)
             with wheel.open("ab") as bundle:
                 bundle.write(b"unreviewed trailing bytes")
@@ -816,7 +816,7 @@ class ReleaseVerifierTests(unittest.TestCase):
 
     def test_wheel_verifier_rejects_nonzero_central_reserved_fields(self) -> None:
         with tempfile.TemporaryDirectory(dir=ROOT / "dist") as temporary:
-            wheel = Path(temporary) / "source_read-0.2.0-py3-none-any.whl"
+            wheel = Path(temporary) / f"source_read-{verify_release.PROJECT_VERSION}-py3-none-any.whl"
             self._wheel(wheel)
             original = wheel.read_bytes()
             central = original.find(b"PK\x01\x02")
@@ -834,7 +834,7 @@ class ReleaseVerifierTests(unittest.TestCase):
 
     def test_wheel_verifier_rejects_central_directory_length_mutations(self) -> None:
         with tempfile.TemporaryDirectory(dir=ROOT / "dist") as temporary:
-            wheel = Path(temporary) / "source_read-0.2.0-py3-none-any.whl"
+            wheel = Path(temporary) / f"source_read-{verify_release.PROJECT_VERSION}-py3-none-any.whl"
             for record_first in (False, True):
                 with self.subTest(record_first=record_first):
                     self._wheel(wheel, record_first=record_first)

@@ -61,4 +61,4 @@ jobs:
         run: python scripts/build_source_archive.py --check-reproducible
 
       - name: Verify exact source archive
-        run: python scripts/verify_release.py --archive dist/source-read-0.2.0.zip
+        run: python scripts/verify_release.py --archive dist/source-read-0.3.0.zip
