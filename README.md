@@ -4,8 +4,8 @@
 
 Source Read is a small, standard-library-only helper that prevents an
 unreadable source from being mistaken for a clean result. This source tree
-identifies itself as version 0.2.0. Versioned releases are source-only under
-the MIT license; no package-registry publication is configured. See
+prepares version 0.3.0; that version is not yet published. Versioned releases
+are source-only under the MIT license; no package-registry publication is configured. See
 [RELEASING.md](RELEASING.md).
 
 The helper preserves a distinction that checks often lose:
@@ -16,27 +16,24 @@ The helper preserves a distinction that checks often lose:
 It records source outcomes supplied by a caller. It does not open files, query
 services, authenticate callers, validate source integrity, or enforce a policy.
 
-## Install from the tagged source
+## Install the published release
 
 Source Read requires Python 3.11 or newer. CI tests Python 3.11 through 3.14 on
 Linux, Python 3.11 and 3.14 on Windows, and Python 3.14 on macOS. Newer Python
 versions are eligible under the package metadata but are not yet validated.
 
 Source Read is not published on PyPI, so do not use a bare
-`pip install source-read` command. For a published release, install the
-reviewed source tag instead:
+`pip install source-read` command. The latest published version is `0.2.0`.
+Install its immutable source asset directly; Git is not required. The URL's
+SHA-256 fragment lets pip verify the reviewed source ZIP before building it:
 
 ```text
-git clone --branch v0.2.0 --depth 1 https://github.com/nymrel/source-read.git
-cd source-read
-git describe --tags --exact-match
-# expected: v0.2.0
 python -m venv ../source-read-runtime
 # Windows:
-../source-read-runtime/Scripts/python -m pip install .
+../source-read-runtime/Scripts/python -m pip install "https://github.com/nymrel/source-read/releases/download/v0.2.0/source-read-0.2.0.zip#sha256=6cee0ef1816d992a4b6cd5ee9414d3e280495e263011f5e1aae3af946a49a30c"
 ../source-read-runtime/Scripts/python -I -c "import source_read; print(source_read.__version__)"
 # POSIX:
-../source-read-runtime/bin/python -m pip install .
+../source-read-runtime/bin/python -m pip install "https://github.com/nymrel/source-read/releases/download/v0.2.0/source-read-0.2.0.zip#sha256=6cee0ef1816d992a4b6cd5ee9414d3e280495e263011f5e1aae3af946a49a30c"
 ../source-read-runtime/bin/python -I -c "import source_read; print(source_read.__version__)"
 # expected: 0.2.0
 ```
@@ -44,6 +41,24 @@ python -m venv ../source-read-runtime
 The sibling virtual environment is intentional. A checkout-local `.venv`
 would be an extra file tree inside the exact source-release verification
 boundary. The installed package has no third-party runtime dependencies.
+
+### Evaluate the 0.3.0 candidate
+
+The published `0.2.0` package does not include `to_report()`. To evaluate the
+new API before a `0.3.0` release, install a reviewed checkout of this candidate
+into the sibling environment:
+
+```text
+# Windows, from the candidate checkout:
+../source-read-runtime/Scripts/python -m pip install .
+../source-read-runtime/Scripts/python -I -c "import source_read; assert source_read.__version__ == '0.3.0'; print(source_read.assess_check([source_read.SourceRead.ok([])], passed=True).to_report())"
+# POSIX, from the candidate checkout:
+../source-read-runtime/bin/python -m pip install .
+../source-read-runtime/bin/python -I -c "import source_read; assert source_read.__version__ == '0.3.0'; print(source_read.assess_check([source_read.SourceRead.ok([])], passed=True).to_report())"
+```
+
+Record the exact candidate commit when pinning an evaluation. Package version
+`0.3.0` in a checkout does not mean a corresponding immutable release exists.
 
 An ordinary source installation lets pip create an isolated build environment.
 For the reviewed build path, run `python scripts/verify_package_build.py`. It
@@ -55,9 +70,9 @@ isolated runtime install, and safely writes the verified local wheel under
 
 ```text
 # Windows:
-../source-read-runtime/Scripts/python -m pip install --no-index --no-deps --force-reinstall dist/source_read-0.2.0-py3-none-any.whl
+../source-read-runtime/Scripts/python -m pip install --no-index --no-deps --force-reinstall dist/source_read-0.3.0-py3-none-any.whl
 # POSIX:
-../source-read-runtime/bin/python -m pip install --no-index --no-deps --force-reinstall dist/source_read-0.2.0-py3-none-any.whl
+../source-read-runtime/bin/python -m pip install --no-index --no-deps --force-reinstall dist/source_read-0.3.0-py3-none-any.whl
 ```
 
 Generated wheels are not release artifacts; ZIP compression can produce
@@ -172,11 +187,10 @@ output before logging or sharing it.
 
 ## Unreleased integration: machine reports
 
-`SourceAssessment.to_report()` is an additive API in this source candidate. It
-is **not included in the published `v0.2.0` tag or source archive**. The current
-package version is retained during preparation; a future release needs its own
-reviewed version and immutable artifacts. Install the candidate's exact source
-or locally verified wheel to evaluate this feature, not the older release.
+`SourceAssessment.to_report()` is an additive API prepared for `0.3.0`. It is
+**not included in the published `v0.2.0` tag or source archive**. The `0.3.0`
+source candidate needs its own reviewed immutable release. Install a reviewed
+candidate checkout or locally verified wheel to evaluate this feature.
 
 Use the report between a reader and a CI check, policy engine, or agent tool
 adapter when those consumers need the machine outcome but not source contents:
@@ -268,7 +282,7 @@ locked package-build validation downloads only reviewed, hashed build wheels.
 python -m unittest discover -s tests -v
 python scripts/verify_release.py
 python scripts/build_source_archive.py --check-reproducible
-python scripts/verify_release.py --archive dist/source-read-0.2.0.zip
+python scripts/verify_release.py --archive dist/source-read-0.3.0.zip
 python scripts/verify_package_build.py
 ```
 
@@ -279,12 +293,17 @@ a registry or create a hosted release.
 
 GitHub's [release list](https://github.com/nymrel/source-read/releases) is the
 authoritative record of published versions. The
-[`v0.2.0` release page](https://github.com/nymrel/source-read/releases/tag/v0.2.0),
-once published, records the exact tag target, source-archive digest,
+[`v0.2.0` release page](https://github.com/nymrel/source-read/releases/tag/v0.2.0)
+records the exact tag target, source-archive digest,
 independent review, hosted checks, and GitHub asset attestation. Tagged
 documentation is immutable release-time evidence; the
 [current main documentation](https://github.com/nymrel/source-read/blob/main/README.md)
 may contain later guidance.
+
+The `0.3.0` candidate adds the content-free report and controlled HTTP/CI
+reference consumer. It keeps the core API compatible, I/O-free, and free of
+third-party runtime dependencies. The new version is release preparation;
+merging its source does not create a tag, release asset, or registry package.
 
 The historical initial release remains available as immutable evidence:
 [`v0.1.0`](https://github.com/nymrel/source-read/releases/tag/v0.1.0), tag

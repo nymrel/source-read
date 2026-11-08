@@ -2,10 +2,9 @@
 
 ## Supported versions
 
-The current `main` branch and the latest published `0.2.x` source tag are
-supported. Until the first `0.2.x` tag is published, the immutable `v0.1.0`
-source release remains supported. Pre-release branches may change without
-notice.
+The current `main` branch and the latest published source tag are supported.
+The latest published version is `v0.2.0`; the `0.3.0` source candidate is not
+yet a published release. Pre-release branches may change without notice.
 
 ## Report a security issue
 
