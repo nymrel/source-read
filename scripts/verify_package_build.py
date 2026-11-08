@@ -535,6 +535,7 @@ def _verify_reference_consumer(python: Path, consumer: Path, wheel: Path) -> Non
         "package_version": PROJECT_VERSION,
         "wheel_sha256": hashlib.sha256(read_regular_bytes(wheel, "wheel")).hexdigest(),
         "core_sha256": hashlib.sha256((ROOT / "src/source_read/core.py").read_bytes()).hexdigest(),
+        "consumer_sha256": hashlib.sha256(read_regular_bytes(example, "consumer")).hexdigest(),
         "isolated_import_within_installed_runtime": True,
         "runtime_and_consumer_outside_checkout": True,
         "checks": checks,

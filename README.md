@@ -256,7 +256,7 @@ server supplies empty, findings, unavailable, malformed, wrong-shape, and partia
 response cases; a seventh case supplies zero sources. The check verifies installed module origin,
 JSON and exit codes, privacy sentinels, wheel identity, and zero runtime
 dependencies. It retains `dist/installed-consumer-acceptance.json`, including the
-exact wheel/core hashes. This demonstrates installed integration with a reader
+exact wheel/core/copied-consumer hashes. This demonstrates installed integration with a reader
 and CI-style machine output, not external-user adoption or a live provider test.
 
 ## Local validation
