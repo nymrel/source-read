@@ -13,6 +13,7 @@ from __future__ import annotations
 import argparse
 from http.client import HTTPException
 import json
+from urllib.error import HTTPError
 from urllib.parse import urlsplit
 from urllib.request import urlopen
 
@@ -49,7 +50,10 @@ def read_inventory(url: str) -> SourceRead[list[object]]:
         value = json.loads(raw.decode("utf-8"), parse_constant=_reject_nonfinite)
         if not isinstance(value, list):
             raise ValueError("inventory must be a JSON array")
-    except (OSError, ValueError, RecursionError, HTTPException):
+    except (OSError, ValueError, RecursionError, HTTPException) as error:
+        # HTTPError is also a response object; release its stream explicitly.
+        if isinstance(error, HTTPError):
+            error.close()
         # Retain a fixed reason rather than transport messages or response text.
         # Even this label/reason stays internal: to_report() omits diagnostics.
         return SourceRead.unreadable(url, "inventory could not be read", empty=[])

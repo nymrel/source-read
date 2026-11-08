@@ -10,6 +10,7 @@ import sys
 import threading
 import unittest
 from unittest import mock
+from urllib.error import HTTPError
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "src"))
@@ -102,6 +103,14 @@ class ConsumerTests(unittest.TestCase):
         self.assertEqual((code, report["outcome"]), (2, "UNKNOWN"))
         self.assertEqual(report["unreadable_indexes"], [0])
         self.assertTrue(report["unknown_applied"])
+
+    def test_http_failure_response_is_closed_without_disclosing_details(self) -> None:
+        body = io.BytesIO(SECRET.encode())
+        error = HTTPError(self.base_url + "/empty", 503, SECRET, {}, body)
+        with mock.patch.object(consumer, "urlopen", side_effect=error):
+            code, report = self.run_check("--url", self.base_url + "/empty")
+        self.assertTrue(body.closed)
+        self.assertEqual((code, report["outcome"]), (2, "UNKNOWN"))
 
     def test_malformed_or_unsupported_inventory_remains_unknown(self) -> None:
         for endpoint in ("invalid", "invalid-utf8", "wrong-shape", "nonfinite", "oversize"):
