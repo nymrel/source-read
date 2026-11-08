@@ -49,6 +49,7 @@ include = [
   "/requirements",
   "/SECURITY.md",
   "/THREAT_MODEL.md",
+  "/examples",
   "/pyproject.toml",
   "/scripts",
   "/src",

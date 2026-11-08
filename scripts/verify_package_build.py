@@ -5,12 +5,15 @@ from __future__ import annotations
 import base64
 import csv
 import hashlib
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import io
+import json
 import os
 import struct
 import subprocess
 import sys
 import tempfile
+import threading
 import venv
 import zipfile
 import zlib
@@ -403,6 +406,8 @@ def _verify_wheel_metadata(wheel: Path) -> None:
 
 
 def _verify_runtime_install(runtime: Path, wheel: Path) -> None:
+    if runtime.resolve().is_relative_to(ROOT.resolve()):
+        raise RuntimeError("installed consumer must be outside the checkout")
     python = _create_environment(runtime)
     _run(
         [
@@ -419,16 +424,135 @@ def _verify_runtime_install(runtime: Path, wheel: Path) -> None:
         cwd=runtime,
     )
     smoke = (
-        "import importlib.metadata as m, pathlib, source_read, sys; "
+        "import importlib.metadata as m, json, pathlib, source_read, sys; "
         f"assert source_read.__version__ == '{PROJECT_VERSION}'; "
         "assert m.version('source-read') == source_read.__version__; "
         "assert not m.requires('source-read'); "
         "a = source_read.assess_check([source_read.SourceRead.ok([])], passed=False); "
         "assert (a.effective_verdict, a.exit_code, a.is_fail) == ('FAIL', 1, True); "
         "assert pathlib.Path(source_read.__file__).resolve().is_relative_to("
-        "pathlib.Path(sys.prefix).resolve())"
+        "pathlib.Path(sys.prefix).resolve()); "
+        "assert not pathlib.Path(source_read.__file__).resolve().is_relative_to("
+        f"pathlib.Path({str(ROOT)!r}).resolve()); "
+        "assert a.to_report()['outcome'] == 'FAIL'; "
+        "assert json.loads(json.dumps(a.to_report())) == a.to_report()"
     )
     _run([str(python), "-I", "-c", smoke], cwd=runtime)
+    privacy_smoke = (
+        "import json, source_read; "
+        "marker = 'synthetic-installed-private-sentinel\\n\\x1b[31m\\u202e'; "
+        "read = source_read.SourceRead.unreadable(marker, marker, empty={'value': marker}); "
+        "a = source_read.assess_sources([read], marker, verdict_exit_code=1); "
+        "encoded = json.dumps(a.to_report(), ensure_ascii=False); "
+        "assert 'synthetic-installed-private-sentinel' not in encoded; "
+        "assert '\\x1b' not in encoded and '\\u202e' not in encoded; "
+        "assert a.to_report()['outcome'] == 'UNKNOWN' and a.to_report()['exit_code'] == 2"
+    )
+    _run([str(python), "-I", "-c", privacy_smoke], cwd=runtime)
+    _verify_reference_consumer(python, runtime.parent / "consumer", wheel)
+
+
+def _verify_reference_consumer(python: Path, consumer: Path, wheel: Path) -> None:
+    """Exercise the copied reference adapter against synthetic loopback sources."""
+
+    if consumer.resolve().is_relative_to(ROOT.resolve()):
+        raise RuntimeError("reference consumer must be outside the checkout")
+    consumer.mkdir()
+    example = consumer / "http_check.py"
+    example.write_bytes((ROOT / "examples/http_check.py").read_bytes())
+    sentinel = "synthetic-private-consumer-sentinel\n\x1b[31m\u202e"
+    responses = {
+        "/empty": (200, b"[]"),
+        "/findings": (200, json.dumps([{"private": sentinel}]).encode()),
+        "/unavailable": (503, json.dumps({"private": sentinel}).encode()),
+        "/invalid": (200, ("invalid JSON " + sentinel).encode()),
+        "/shape": (200, json.dumps({"private": sentinel}).encode()),
+        "/partial": (206, b"[]"),
+    }
+
+    class Handler(BaseHTTPRequestHandler):
+        def do_GET(self) -> None:
+            status, body = responses[self.path]
+            self.send_response(status)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+
+        def log_message(self, *_args: object) -> None:
+            return
+
+    server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    cases = (
+        ("empty", ["--url", f"http://127.0.0.1:{server.server_port}/empty"], 0),
+        ("findings", ["--url", f"http://127.0.0.1:{server.server_port}/findings"], 1),
+        ("unavailable", ["--url", f"http://127.0.0.1:{server.server_port}/unavailable"], 2),
+        ("invalid", ["--url", f"http://127.0.0.1:{server.server_port}/invalid"], 2),
+        ("shape", ["--url", f"http://127.0.0.1:{server.server_port}/shape"], 2),
+        ("partial", ["--url", f"http://127.0.0.1:{server.server_port}/partial"], 2),
+        ("no-sources", ["--no-sources"], 2),
+    )
+    outcomes = {0: "PASS", 1: "FAIL", 2: "UNKNOWN"}
+    checks = []
+    try:
+        for name, arguments, code in cases:
+            result = subprocess.run(
+                [str(python), "-I", str(example), *arguments],
+                cwd=consumer,
+                capture_output=True,
+                text=True,
+                encoding="utf-8",
+                check=False,
+                timeout=15,
+            )
+            report = json.loads(result.stdout)
+            expected = {
+                "schema": "source-read.assessment.v1",
+                "outcome": outcomes[code],
+                "exit_code": code,
+                "source_count": 0 if name == "no-sources" else 1,
+                "unreadable_indexes": [0] if code == 2 and name != "no-sources" else [],
+                "empty_input": name == "no-sources",
+                "allow_empty": False,
+                "unknown_applied": code == 2,
+            }
+            if result.returncode != code or report != expected or result.stderr:
+                raise RuntimeError(f"installed reference consumer failed: {name}")
+            if "synthetic-private-consumer-sentinel" in result.stdout:
+                raise RuntimeError("installed reference consumer disclosed caller content")
+            checks.append({"case": name, "outcome": outcomes[code], "exit_code": code})
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=5)
+
+    receipt = {
+        "schema": "source-read.installed-consumer.v1",
+        "status": "PASS",
+        "kind": "synthetic-installed-consumer",
+        "package_version": PROJECT_VERSION,
+        "wheel_sha256": hashlib.sha256(read_regular_bytes(wheel, "wheel")).hexdigest(),
+        "core_sha256": hashlib.sha256((ROOT / "src/source_read/core.py").read_bytes()).hexdigest(),
+        "isolated_import_within_installed_runtime": True,
+        "runtime_and_consumer_outside_checkout": True,
+        "checks": checks,
+        "external_user_adoption": "not observed",
+    }
+    receipt_bytes = (json.dumps(receipt, indent=2) + "\n").encode()
+
+    def verify_receipt(path: Path) -> None:
+        if read_regular_bytes(path, "consumer receipt") != receipt_bytes:
+            raise RuntimeError("consumer receipt differs from observed result")
+
+    publish_bytes(
+        ROOT,
+        ROOT / "dist/installed-consumer-acceptance.json",
+        receipt_bytes,
+        verify_receipt,
+    )
+    print(f"installed reference consumer: PASS ({len(checks)} synthetic cases)")
 
 
 def main() -> int:
@@ -453,7 +577,10 @@ def main() -> int:
         if first != second:
             raise RuntimeError("repeated locked wheel builds differ")
         _verify_wheel_metadata(built[0])
-        _verify_runtime_install(workspace / "runtime", built[0])
+        with tempfile.TemporaryDirectory(
+            prefix="source-read-installed-", dir=ROOT.parent
+        ) as independent:
+            _verify_runtime_install(Path(independent) / "runtime", built[0])
         digest = hashlib.sha256(first).hexdigest()
         published = publish_bytes(
             ROOT,
